@@ -14,24 +14,32 @@ export default function AppLayout() {
   const { isDark, toggleTheme } = useTheme();
 
   return (
-    <div className="flex h-screen bg-gray-950 overflow-hidden">
+    <div className="flex h-screen bg-gray-100 dark:bg-gray-950 overflow-hidden">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar */}
-        <header className="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800 shrink-0">
+        <header className="flex items-center justify-between px-4 py-3
+                           bg-white border-b border-gray-200
+                           dark:bg-gray-900 dark:border-gray-800 shrink-0">
           <button
-            className="lg:hidden p-2 rounded-xl hover:bg-gray-800 text-gray-400"
+            className="lg:hidden p-2 rounded-xl
+                       hover:bg-gray-100 dark:hover:bg-gray-800
+                       text-gray-500 dark:text-gray-400"
             onClick={() => setSidebarOpen(true)}
           >
             <Menu className="w-5 h-5" />
           </button>
 
           <div className="ml-auto flex items-center gap-3">
-            {/* Theme toggle — same pattern as admin */}
+            {/* Theme toggle */}
             <button
               onClick={toggleTheme}
-              className="p-2 rounded-xl hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+              className="p-2 rounded-xl
+                         hover:bg-gray-100 dark:hover:bg-gray-800
+                         text-gray-500 dark:text-gray-400
+                         hover:text-gray-700 dark:hover:text-gray-200
+                         transition-colors"
               title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {isDark
@@ -41,7 +49,9 @@ export default function AppLayout() {
             </button>
 
             {/* Socket status */}
-            <span className={`flex items-center gap-1.5 text-xs font-medium ${isConnected ? 'text-green-400' : 'text-amber-400'}`}>
+            <span className={`flex items-center gap-1.5 text-xs font-medium ${
+              isConnected ? 'text-green-500' : 'text-amber-500'
+            }`}>
               {isConnected
                 ? <><Wifi className="w-3.5 h-3.5" /> Live</>
                 : <><WifiOff className="w-3.5 h-3.5" /> Offline</>

@@ -1,10 +1,26 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FlowUp — Staff</title>
+    <!--
+      Synchronously apply the saved theme BEFORE React renders.
+      This prevents a flash of wrong theme on load.
+      Defaults to dark (waiter interface is dark-first).
+    -->
+    <script>
+      (function () {
+        var saved = localStorage.getItem('theme');
+        var isDark = saved ? saved === 'dark' : true; // default: dark
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
