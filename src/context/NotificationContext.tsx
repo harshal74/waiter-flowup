@@ -1,22 +1,34 @@
 /**
  * Waiter Notification Context
  *
- * Tracks ready-order and waiter-call counts by maintaining the full
- * list of IDs in state — never incrementing/decrementing counters
- * which drift when socket events arrive out of order or are missed.
+ * Counts:
+ *  • readyOrderCount  — orders with status READY  (sidebar badge)
+ *  • waiterCallCount  — active waiter requests     (sidebar badge)
  *
- * Audio chimes:
+ * Sounds (Web Audio API — no external files):
  *  • new READY order  → ascending two-tone chime
- *  • new waiter call  → urgent triple-beep
+ *  • new waiter call  → triple urgent beep
+ *
+ * Audio strategy:
+ *  - AudioContext is created eagerly on mount and stored in a ref.
+ *  - It starts in "suspended" state (browser policy).
+ *  - The first user click/keydown/touchstart resumes it permanently.
+ *  - All sound calls go through a single helper that auto-resumes
+ *    before playing, so sounds work even if the gesture happened
+ *    after the context was constructed.
+ *  - Sound functions are plain module-level functions that receive
+ *    the context ref — no useCallback dependency issues.
  */
 
 import React, {
   createContext, useContext, useEffect,
-  useRef, useState, useCallback,
+  useRef, useState,
 } from 'react';
 import API from '../lib/api';
 import { socket } from './SocketContext';
 import type { Order, WaiterRequest, OrderStatus } from '../types';
+
+// ── Types ────────────────────────────────────────────────────────
 
 interface NotificationContextType {
   readyOrderCount: number;
@@ -28,97 +40,104 @@ const NotificationContext = createContext<NotificationContextType>({
   waiterCallCount: 0,
 });
 
-// ── Web Audio helpers ────────────────────────────────────────────
+// ── Audio helpers (plain functions, no hooks) ────────────────────
 
-function createAudioCtx(): AudioContext {
-  return new (window.AudioContext || (window as any).webkitAudioContext)();
-}
-
-function playTone(
+function tone(
   ctx: AudioContext,
   freq: number,
   startAt: number,
-  duration: number,
-  gain = 0.18,
+  dur: number,
+  gain = 0.2,
 ) {
-  const osc = ctx.createOscillator();
-  const g   = ctx.createGain();
-  osc.connect(g);
-  g.connect(ctx.destination);
-  osc.frequency.value = freq;
-  g.gain.value        = gain;
-  osc.start(startAt);
-  osc.stop(startAt + duration);
+  try {
+    const osc = ctx.createOscillator();
+    const g   = ctx.createGain();
+    osc.connect(g);
+    g.connect(ctx.destination);
+    osc.type            = 'sine';
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(gain, startAt);
+    g.gain.exponentialRampToValueAtTime(0.001, startAt + dur);
+    osc.start(startAt);
+    osc.stop(startAt + dur + 0.01);
+  } catch { /* ignore */ }
 }
 
-/** Two ascending tones — "order ready to serve" */
-function playReadyChime(ctx: AudioContext) {
-  const t = ctx.currentTime;
-  playTone(ctx, 880,  t,        0.22);
-  playTone(ctx, 1100, t + 0.25, 0.22);
+/**
+ * Resume the context if needed, then run the play callback.
+ * This is the only entry point for playing sounds.
+ */
+function withAudio(ctx: AudioContext | null, play: (ctx: AudioContext) => void) {
+  if (!ctx) return;
+  if (ctx.state === 'running') {
+    play(ctx);
+  } else {
+    ctx.resume().then(() => play(ctx)).catch(() => {});
+  }
 }
 
-/** Three short urgent beeps — "customer needs waiter" */
-function playWaiterBeep(ctx: AudioContext) {
+function doPlayReady(ctx: AudioContext) {
   const t = ctx.currentTime;
-  playTone(ctx, 1000, t,        0.18, 0.22);
-  playTone(ctx, 1000, t + 0.22, 0.18, 0.22);
-  playTone(ctx, 1000, t + 0.44, 0.18, 0.22);
+  tone(ctx, 880,  t,        0.28);
+  tone(ctx, 1320, t + 0.32, 0.28);
+}
+
+function doPlayWaiter(ctx: AudioContext) {
+  const t = ctx.currentTime;
+  tone(ctx, 1050, t,        0.18, 0.25);
+  tone(ctx, 1050, t + 0.23, 0.18, 0.25);
+  tone(ctx, 1050, t + 0.46, 0.18, 0.25);
 }
 
 // ── Provider ─────────────────────────────────────────────────────
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
-  // Store full sets of IDs so the count is always exact — never drifts
-  const [readyOrderIds,  setReadyOrderIds]  = useState<Set<string>>(new Set());
-  const [waiterCallIds,  setWaiterCallIds]  = useState<Set<string>>(new Set());
+  // Full ID sets — count = set.size, never drifts
+  const [readyOrderIds, setReadyOrderIds] = useState<Set<string>>(new Set());
+  const [waiterCallIds, setWaiterCallIds] = useState<Set<string>>(new Set());
 
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  // Single AudioContext for the lifetime of the provider
+  const ctxRef = useRef<AudioContext | null>(null);
 
-  // ── Unlock AudioContext on first user interaction ──────────────
+  // ── Create AudioContext once on mount ──────────────────────────
   useEffect(() => {
-    const unlock = () => {
-      if (!audioCtxRef.current) audioCtxRef.current = createAudioCtx();
-      if (audioCtxRef.current.state === 'suspended') {
-        audioCtxRef.current.resume().catch(() => {});
+    try {
+      ctxRef.current = new (
+        window.AudioContext || (window as any).webkitAudioContext
+      )();
+    } catch {
+      ctxRef.current = null;
+    }
+
+    return () => {
+      ctxRef.current?.close().catch(() => {});
+    };
+  }, []);
+
+  // ── Resume AudioContext on first user gesture ──────────────────
+  useEffect(() => {
+    const resume = () => {
+      if (ctxRef.current && ctxRef.current.state === 'suspended') {
+        ctxRef.current.resume().catch(() => {});
       }
     };
-    window.addEventListener('click',      unlock, { once: true });
-    window.addEventListener('keydown',    unlock, { once: true });
-    window.addEventListener('touchstart', unlock, { once: true });
+    window.addEventListener('click',      resume, { once: true });
+    window.addEventListener('keydown',    resume, { once: true });
+    window.addEventListener('touchstart', resume, { once: true });
     return () => {
-      window.removeEventListener('click',      unlock);
-      window.removeEventListener('keydown',    unlock);
-      window.removeEventListener('touchstart', unlock);
+      window.removeEventListener('click',      resume);
+      window.removeEventListener('keydown',    resume);
+      window.removeEventListener('touchstart', resume);
     };
   }, []);
 
-  const playReady = useCallback(() => {
-    try {
-      if (!audioCtxRef.current) audioCtxRef.current = createAudioCtx();
-      const ctx = audioCtxRef.current;
-      const go  = () => playReadyChime(ctx);
-      ctx.state === 'suspended' ? ctx.resume().then(go).catch(() => {}) : go();
-    } catch { /* audio is best-effort */ }
-  }, []);
-
-  const playWaiter = useCallback(() => {
-    try {
-      if (!audioCtxRef.current) audioCtxRef.current = createAudioCtx();
-      const ctx = audioCtxRef.current;
-      const go  = () => playWaiterBeep(ctx);
-      ctx.state === 'suspended' ? ctx.resume().then(go).catch(() => {}) : go();
-    } catch { /* audio is best-effort */ }
-  }, []);
-
-  // ── Initial data load (source of truth) ───────────────────────
+  // ── Initial data load ──────────────────────────────────────────
   useEffect(() => {
     API.get('/staff/orders').then(res => {
       const orders: Order[] = res.data.data || [];
-      const ids = new Set(
-        orders.filter(o => o.status === 'READY').map(o => o._id),
+      setReadyOrderIds(
+        new Set(orders.filter(o => o.status === 'READY').map(o => o._id)),
       );
-      setReadyOrderIds(ids);
     }).catch(() => {});
 
     API.get('/waiter-requests').then(res => {
@@ -129,48 +148,47 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
   // ── Socket listeners ───────────────────────────────────────────
   useEffect(() => {
-    // Order status changed
     const onStatusUpdated = (payload: { orderId: string; status: OrderStatus }) => {
-      setReadyOrderIds(prev => {
-        const next = new Set(prev);
-        if (payload.status === 'READY') {
-          if (!next.has(payload.orderId)) {
-            // Genuinely new READY order → chime
-            next.add(payload.orderId);
-            playReady();
-          }
-        } else {
+      if (payload.status === 'READY') {
+        setReadyOrderIds(prev => {
+          if (prev.has(payload.orderId)) return prev;          // already counted
+          withAudio(ctxRef.current, doPlayReady);
+          return new Set([...prev, payload.orderId]);
+        });
+      } else {
+        // Order left READY (served / cancelled / rejected)
+        setReadyOrderIds(prev => {
+          if (!prev.has(payload.orderId)) return prev;
+          const next = new Set(prev);
           next.delete(payload.orderId);
-        }
-        return next;
-      });
+          return next;
+        });
+      }
     };
 
-    // Brand-new order arriving (edge case: already READY on create)
     const onNewOrder = (order: Order) => {
       if (order.status === 'READY') {
         setReadyOrderIds(prev => {
           if (prev.has(order._id)) return prev;
-          playReady();
+          withAudio(ctxRef.current, doPlayReady);
           return new Set([...prev, order._id]);
         });
       }
     };
 
-    // New waiter call
     const onWaiterRequested = (req: any) => {
       const id = String(req._id);
       setWaiterCallIds(prev => {
-        if (prev.has(id)) return prev;
-        playWaiter();
+        if (prev.has(id)) return prev;                        // duplicate guard
+        withAudio(ctxRef.current, doPlayWaiter);
         return new Set([...prev, id]);
       });
     };
 
-    // Waiter call resolved / dismissed
     const onWaiterUpdated = (payload: { _id: string; status: string }) => {
       if (payload.status === 'COMPLETED') {
         setWaiterCallIds(prev => {
+          if (!prev.has(payload._id)) return prev;
           const next = new Set(prev);
           next.delete(payload._id);
           return next;
@@ -178,10 +196,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       }
     };
 
-    socket.on('order_status_updated',   onStatusUpdated);
-    socket.on('new_order',              onNewOrder);
-    socket.on('waiter_requested',       onWaiterRequested);
-    socket.on('waiter_request_updated', onWaiterUpdated);
+    socket.on('order_status_updated',    onStatusUpdated);
+    socket.on('new_order',               onNewOrder);
+    socket.on('waiter_requested',        onWaiterRequested);
+    socket.on('waiter_request_updated',  onWaiterUpdated);
 
     return () => {
       socket.off('order_status_updated',   onStatusUpdated);
@@ -189,7 +207,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       socket.off('waiter_requested',       onWaiterRequested);
       socket.off('waiter_request_updated', onWaiterUpdated);
     };
-  }, [playReady, playWaiter]);
+  // ctxRef is stable — intentionally omitted from deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <NotificationContext.Provider value={{
