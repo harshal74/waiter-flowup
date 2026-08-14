@@ -1,12 +1,17 @@
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
-import { Menu, Wifi, WifiOff } from 'lucide-react';
+import { Menu, Wifi, WifiOff, Sun, Moon } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useSocket } from '../../context/SocketContext';
+import { useTheme } from '../../context/ThemeContext';
 
 export default function AppLayout() {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Match admin: open by default on desktop (lg = 1024px+)
+  const [sidebarOpen, setSidebarOpen] = useState(
+    typeof window !== 'undefined' && window.innerWidth >= 1024
+  );
   const { isConnected } = useSocket();
+  const { isDark, toggleTheme } = useTheme();
 
   return (
     <div className="flex h-screen bg-gray-950 overflow-hidden">
@@ -22,7 +27,20 @@ export default function AppLayout() {
             <Menu className="w-5 h-5" />
           </button>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-3">
+            {/* Theme toggle — same pattern as admin */}
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-xl hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark
+                ? <Sun  className="w-4 h-4" />
+                : <Moon className="w-4 h-4" />
+              }
+            </button>
+
+            {/* Socket status */}
             <span className={`flex items-center gap-1.5 text-xs font-medium ${isConnected ? 'text-green-400' : 'text-amber-400'}`}>
               {isConnected
                 ? <><Wifi className="w-3.5 h-3.5" /> Live</>

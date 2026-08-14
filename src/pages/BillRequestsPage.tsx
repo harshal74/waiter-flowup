@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Receipt, Loader2, ChevronDown, ChevronUp, CheckCircle, XCircle, MessageCircle } from 'lucide-react';
+import { Receipt, Loader2, ChevronDown, ChevronUp, CheckCircle, XCircle, MessageCircle, Search, RefreshCw, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
 import API from '../lib/api';
@@ -51,6 +51,7 @@ interface BillDetail {
 export default function BillRequestsPage() {
   const [orders,        setOrders]        = useState<Order[]>([]);
   const [loading,       setLoading]       = useState(true);
+  const [refreshing,    setRefreshing]    = useState(false);
   const [selected,      setSelected]      = useState<Record<string, boolean>>({});
   const [discount,      setDiscount]      = useState(0);
   const [payment,       setPayment]       = useState<'Cash' | 'UPI' | 'Card'>('Cash');
@@ -62,16 +63,36 @@ export default function BillRequestsPage() {
   // Payment settings from DB via API — never from env
   const [upiId,          setUpiId]          = useState('');
   const [restaurantName, setRestaurantName] = useState('FlowUp Restaurant');
+  // Search / filter
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [tableSearch,    setTableSearch]    = useState('');
 
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (opts?: { silent?: boolean }) => {
+    if (opts?.silent) setRefreshing(true);
+    else              setLoading(true);
     try {
-      const res = await API.get('/billing/orders');
+      const params = new URLSearchParams();
+      if (customerSearch.trim()) params.append('customer', customerSearch.trim());
+      if (tableSearch.trim())    params.append('table',    tableSearch.trim());
+      const res = await API.get(`/billing/orders?${params.toString()}`);
       setOrders(res.data.orders || []);
     } catch { toast.error('Failed to load orders'); }
-    finally { setLoading(false); }
-  }, []);
+    finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [customerSearch, tableSearch]);
 
+  // Reload when filters change (debounced 400ms — same as admin)
+  useEffect(() => {
+    const t = setTimeout(() => fetchOrders(), 400);
+    return () => clearTimeout(t);
+  }, [customerSearch, tableSearch, fetchOrders]);
+
+  // Initial load
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
+
+  const handleRefresh = () => fetchOrders({ silent: true });
 
   const toggleOrder = (id: string) =>
     setSelected(p => ({ ...p, [id]: !p[id] }));
@@ -95,7 +116,7 @@ export default function BillRequestsPage() {
       setRestaurantName(res.data.paymentSettings?.restaurantName || 'FlowUp Restaurant');
       toast.success('Bill generated!');
       setSelected({});
-      fetchOrders();
+      fetchOrders({ silent: true });
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to generate bill');
     } finally { setGenLoad(false); }
@@ -108,7 +129,7 @@ export default function BillRequestsPage() {
       await API.patch(`/billing/${activeBill.bill._id}/confirm`);
       toast.success('Payment confirmed! Bill closed.');
       setActiveBill(null);
-      fetchOrders();
+      fetchOrders({ silent: true });
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to confirm payment');
     } finally { setConfirmLoad(false); }
@@ -121,7 +142,7 @@ export default function BillRequestsPage() {
       await API.delete(`/billing/${activeBill.bill._id}`);
       toast('Bill cancelled. Orders returned to unpaid list.');
       setActiveBill(null);
-      fetchOrders();
+      fetchOrders({ silent: true });
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to cancel bill');
     } finally { setCancelLoad(false); }
@@ -129,14 +150,77 @@ export default function BillRequestsPage() {
 
   return (
     <div className="space-y-5">
-      {/* Page header */}
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-primary-500/20 flex items-center justify-center">
-          <Receipt className="w-5 h-5 text-primary-400" />
+      {/* Page header + search/filter/refresh */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-primary-500/20 flex items-center justify-center">
+              <Receipt className="w-5 h-5 text-primary-400" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-white">Bill Requests</h1>
+              <p className="text-xs text-gray-400">{orders.length} unpaid order{orders.length !== 1 ? 's' : ''}</p>
+            </div>
+          </div>
+
+          {/* Refresh button */}
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing || loading}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl
+                       bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white
+                       text-sm font-medium transition-colors disabled:opacity-50"
+            title="Refresh orders"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
         </div>
-        <div>
-          <h1 className="text-xl font-bold text-white">Bill Requests</h1>
-          <p className="text-xs text-gray-400">{orders.length} unpaid order{orders.length !== 1 ? 's' : ''}</p>
+
+        {/* Search & filter bar */}
+        <div className="flex flex-col sm:flex-row gap-2">
+          {/* Customer name search */}
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+            <input
+              type="text"
+              value={customerSearch}
+              onChange={e => setCustomerSearch(e.target.value)}
+              placeholder="Search customer…"
+              className="input pl-9 text-sm py-2 w-full"
+            />
+            {customerSearch && (
+              <button
+                onClick={() => setCustomerSearch('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Table number search */}
+          <div className="relative sm:w-36">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs font-semibold pointer-events-none">
+              T-
+            </span>
+            <input
+              type="number"
+              min={1}
+              value={tableSearch}
+              onChange={e => setTableSearch(e.target.value)}
+              placeholder="Table No."
+              className="input pl-8 text-sm py-2 w-full"
+            />
+            {tableSearch && (
+              <button
+                onClick={() => setTableSearch('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -293,7 +377,20 @@ export default function BillRequestsPage() {
           ) : orders.length === 0 ? (
             <div className="card py-12 text-center">
               <Receipt className="w-10 h-10 mx-auto text-gray-600 mb-3" />
-              <p className="text-gray-400">No unpaid orders</p>
+              <p className="text-gray-400">
+                {customerSearch || tableSearch
+                  ? 'No orders match your search'
+                  : 'No unpaid orders'
+                }
+              </p>
+              {(customerSearch || tableSearch) && (
+                <button
+                  onClick={() => { setCustomerSearch(''); setTableSearch(''); }}
+                  className="mt-3 text-sm text-primary-400 hover:text-primary-300"
+                >
+                  Clear filters
+                </button>
+              )}
             </div>
           ) : orders.map(order => (
             <div

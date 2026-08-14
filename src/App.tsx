@@ -3,6 +3,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
 import { NotificationProvider } from './context/NotificationContext';
+import { ThemeProvider } from './context/ThemeContext';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import AppLayout from './components/layout/AppLayout';
 
@@ -20,6 +21,7 @@ import KDSPage          from './pages/KDSPage';
 export default function App() {
   return (
     <BrowserRouter>
+      <ThemeProvider>
       <AuthProvider>
         <SocketProvider>
           <NotificationProvider>
@@ -65,6 +67,7 @@ export default function App() {
           </NotificationProvider>
         </SocketProvider>
       </AuthProvider>
+      </ThemeProvider>
     </BrowserRouter>
   );
 }
