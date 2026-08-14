@@ -4,6 +4,7 @@ import {
   Receipt, Table2, User, LogOut, Utensils, Monitor,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useNotifications } from '../../context/NotificationContext';
 import type { StaffRole } from '../../types';
 
 interface NavItem {
@@ -11,17 +12,19 @@ interface NavItem {
   label: string;
   icon: React.ElementType;
   roles: StaffRole[];
+  /** key into NotificationCounts to display a badge */
+  badgeKey?: 'readyOrderCount' | 'waiterCallCount';
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: '/dashboard',    label: 'Dashboard',      icon: LayoutDashboard, roles: ['ADMIN','CHEF','WAITER','ASSISTANT'] },
-  { to: '/kitchen',      label: 'Kitchen Orders',  icon: ChefHat,         roles: ['ADMIN','CHEF'] },
-  { to: '/kds',          label: 'KDS Display',     icon: Monitor,         roles: ['ADMIN','CHEF','WAITER','ASSISTANT'] },
-  { to: '/ready-orders', label: 'Ready Orders',    icon: CheckSquare,     roles: ['ADMIN','WAITER'] },
-  { to: '/waiter-calls', label: 'Waiter Calls',    icon: BellRing,        roles: ['ADMIN','WAITER','ASSISTANT'] },
-  { to: '/bill-requests',label: 'Bill Requests',   icon: Receipt,         roles: ['ADMIN','WAITER'] },
-  { to: '/tables',       label: 'Tables',          icon: Table2,          roles: ['ADMIN','WAITER','ASSISTANT'] },
-  { to: '/profile',      label: 'Profile',         icon: User,            roles: ['ADMIN','CHEF','WAITER','ASSISTANT'] },
+  { to: '/dashboard',     label: 'Dashboard',      icon: LayoutDashboard, roles: ['ADMIN','CHEF','WAITER','ASSISTANT'] },
+  { to: '/kitchen',       label: 'Kitchen Orders', icon: ChefHat,         roles: ['ADMIN','CHEF'] },
+  { to: '/kds',           label: 'KDS Display',    icon: Monitor,         roles: ['ADMIN','CHEF','WAITER','ASSISTANT'] },
+  { to: '/ready-orders',  label: 'Ready Orders',   icon: CheckSquare,     roles: ['ADMIN','WAITER'],    badgeKey: 'readyOrderCount' },
+  { to: '/waiter-calls',  label: 'Waiter Calls',   icon: BellRing,        roles: ['ADMIN','WAITER','ASSISTANT'], badgeKey: 'waiterCallCount' },
+  { to: '/bill-requests', label: 'Bill Requests',  icon: Receipt,         roles: ['ADMIN','WAITER'] },
+  { to: '/tables',        label: 'Tables',         icon: Table2,          roles: ['ADMIN','WAITER','ASSISTANT'] },
+  { to: '/profile',       label: 'Profile',        icon: User,            roles: ['ADMIN','CHEF','WAITER','ASSISTANT'] },
 ];
 
 interface Props {
@@ -32,6 +35,12 @@ interface Props {
 export default function Sidebar({ open, onClose }: Props) {
   const { staff, logout } = useAuth();
   const navigate = useNavigate();
+  const { readyOrderCount, waiterCallCount } = useNotifications();
+
+  const counts: Record<string, number> = {
+    readyOrderCount,
+    waiterCallCount,
+  };
 
   const filtered = NAV_ITEMS.filter(item =>
     staff ? item.roles.includes(staff.role) : false
@@ -86,23 +95,41 @@ export default function Sidebar({ open, onClose }: Props) {
 
         {/* Nav links */}
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-          {filtered.map(item => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              onClick={onClose}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-all
-                ${isActive
-                  ? 'bg-primary-500/20 text-primary-400'
-                  : 'text-gray-400 hover:bg-gray-800 hover:text-white'
-                }`
-              }
-            >
-              <item.icon className="w-5 h-5 shrink-0" />
-              {item.label}
-            </NavLink>
-          ))}
+          {filtered.map(item => {
+            const count = item.badgeKey ? counts[item.badgeKey] : 0;
+
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                onClick={onClose}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-all
+                  ${isActive
+                    ? 'bg-primary-500/20 text-primary-400'
+                    : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+                  }`
+                }
+              >
+                <item.icon className="w-5 h-5 shrink-0" />
+                <span className="flex-1">{item.label}</span>
+
+                {/* Badge — only shown when count > 0 */}
+                {count > 0 && (
+                  <span className={`
+                    min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold
+                    flex items-center justify-center shrink-0
+                    ${item.badgeKey === 'waiterCallCount'
+                      ? 'bg-red-500 text-white'
+                      : 'bg-green-500 text-white'
+                    }
+                  `}>
+                    {count > 99 ? '99+' : count}
+                  </span>
+                )}
+              </NavLink>
+            );
+          })}
         </nav>
 
         {/* Logout */}

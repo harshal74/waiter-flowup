@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
+import { NotificationProvider } from './context/NotificationContext';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import AppLayout from './components/layout/AppLayout';
 
@@ -21,6 +22,7 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <SocketProvider>
+          <NotificationProvider>
           <Routes>
             {/* Public routes */}
             <Route path="/login"  element={<LoginPage />} />
@@ -60,6 +62,7 @@ export default function App() {
               error:   { iconTheme: { primary: '#EF4444', secondary: '#fff' } },
             }}
           />
+          </NotificationProvider>
         </SocketProvider>
       </AuthProvider>
     </BrowserRouter>
