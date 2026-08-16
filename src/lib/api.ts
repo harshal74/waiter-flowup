@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Dev: baseURL = '/api' → Vite proxy forwards to http://localhost:5000/api
-// Prod: VITE_API_URL = https://flowup-backend-1.onrender.com/api
+// Prod: set VITE_API_URL on Netlify (e.g., https://your-backend.onrender.com/api)
 const API = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
 });
@@ -25,4 +25,4 @@ API.interceptors.response.use(
 export default API;
 
 export const RESTAURANT_ID =
-  (import.meta.env.VITE_RESTAURANT_ID as string) || 'FLOWUP001';
+  (import.meta.env.VITE_RESTAURANT_ID as string) || '';
