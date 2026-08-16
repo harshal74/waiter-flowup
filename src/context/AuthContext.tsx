@@ -5,7 +5,7 @@ import type { Staff } from '../types';
 interface AuthContextType {
   staff: Staff | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string; requiresOtp?: boolean }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateStaff: (data: Partial<Staff>) => void;
 }
@@ -60,7 +60,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return {
         success:     false,
         error:       data?.message || 'Login failed',
-        requiresOtp: data?.requiresOtp ?? false,
       };
     }
   }, []);

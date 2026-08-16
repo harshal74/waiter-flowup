@@ -2,7 +2,6 @@ import { useState, FormEvent } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { Utensils, Loader2, Eye, EyeOff } from 'lucide-react';
 import { TOKEN_KEY, useAuth } from '../context/AuthContext';
-import toast from 'react-hot-toast';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -35,16 +34,10 @@ export default function LoginPage() {
       const result = await login(email.trim(), password);
 
       if (result.success) {
-        toast.success('Welcome!');
         navigate('/dashboard', { replace: true });
       } else {
         setError(result.error || 'Login failed');
         setLoading(false);
-
-        if (result.requiresOtp) {
-          toast('Please verify your email first.', { icon: '📧' });
-          navigate(`/signup?email=${encodeURIComponent(email.trim())}&step=otp`, { replace: true });
-        }
       }
     } catch {
       setError('Something went wrong. Please try again.');
