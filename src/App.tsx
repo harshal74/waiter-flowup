@@ -3,6 +3,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
 import { NotificationProvider } from './context/NotificationContext';
+import { RestaurantProvider } from './context/RestaurantContext';
 import { ThemeProvider } from './context/ThemeContext';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import AppLayout from './components/layout/AppLayout';
@@ -33,7 +34,7 @@ export default function App() {
             {/* Auth guard — redirects to /login if not authenticated */}
             <Route element={<ProtectedRoute />}>
               {/* App shell with sidebar */}
-              <Route element={<AppLayout />}>
+              <Route element={<RestaurantProvider><AppLayout /></RestaurantProvider>}>
                 <Route path="/dashboard"     element={<DashboardPage />} />
                 <Route path="/kitchen"       element={<KitchenPage />} />
                 <Route path="/ready-orders"  element={<ReadyOrdersPage />} />

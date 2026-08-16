@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
+import { useRestaurant } from '../../context/RestaurantContext';
 import type { StaffRole } from '../../types';
 
 interface NavItem {
@@ -36,6 +37,7 @@ export default function Sidebar({ open, onClose }: Props) {
   const { staff, logout } = useAuth();
   const navigate = useNavigate();
   const { readyOrderCount, waiterCallCount } = useNotifications();
+  const { restaurant } = useRestaurant();
 
   const counts: Record<string, number> = {
     readyOrderCount,
@@ -72,11 +74,16 @@ export default function Sidebar({ open, onClose }: Props) {
       `}>
         {/* Logo */}
         <div className="flex items-center gap-3 px-5 py-5 border-b border-gray-200 dark:border-gray-800">
-          <div className="w-9 h-9 rounded-xl bg-primary-500 flex items-center justify-center">
-            <Utensils className="w-5 h-5 text-white" />
+          <div className="w-9 h-9 rounded-xl bg-primary-500 flex items-center justify-center overflow-hidden shrink-0">
+            {restaurant?.restaurantLogo
+              ? <img src={restaurant.restaurantLogo} alt={restaurant.restaurantName} className="w-full h-full object-cover" />
+              : <Utensils className="w-5 h-5 text-white" />
+            }
           </div>
           <div>
-            <p className="font-bold text-gray-900 dark:text-white text-sm">FlowUp</p>
+            <p className="font-bold text-gray-900 dark:text-white text-sm truncate">
+              {restaurant?.restaurantName || 'FlowUp'}
+            </p>
             <p className="text-xs text-gray-500 dark:text-gray-400">Staff Portal</p>
           </div>
         </div>
@@ -86,8 +93,11 @@ export default function Sidebar({ open, onClose }: Props) {
           <div className="mx-4 mt-4 px-3 py-2.5 rounded-xl
                           bg-gray-100 dark:bg-gray-800
                           flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-primary-500/20 text-primary-400 flex items-center justify-center font-bold text-sm shrink-0">
-              {staff.name.charAt(0).toUpperCase()}
+            <div className="w-8 h-8 rounded-full bg-primary-500/20 text-primary-400 flex items-center justify-center font-bold text-sm shrink-0 overflow-hidden">
+              {staff.profileImage
+                ? <img src={staff.profileImage} alt={staff.name} className="w-full h-full object-cover" />
+                : staff.name.charAt(0).toUpperCase()
+              }
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{staff.name}</p>
