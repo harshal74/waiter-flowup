@@ -1,15 +1,12 @@
 import { useState, FormEvent } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { Utensils, Loader2, Eye, EyeOff } from 'lucide-react';
-import { TOKEN_KEY, USER_KEY } from '../context/AuthContext';
+import { TOKEN_KEY, useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import axios from 'axios';
-
-// Use relative /api in dev (Vite proxy), or absolute URL in production
-const BASE = import.meta.env.VITE_API_URL || '/api';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
@@ -35,41 +32,23 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await axios.post(
-        `${BASE}/staff/login`,
-        { email: email.trim(), password },
-        { headers: { 'Content-Type': 'application/json' } }
-      );
+      const result = await login(email.trim(), password);
 
-      const { token, staff } = res.data;
-
-      if (!token || !staff) {
-        setError('Invalid server response — missing token or staff data');
+      if (result.success) {
+        toast.success('Welcome!');
+        navigate('/dashboard', { replace: true });
+      } else {
+        setError(result.error || 'Login failed');
         setLoading(false);
-        return;
+
+        if (result.requiresOtp) {
+          toast('Please verify your email first.', { icon: '📧' });
+          navigate(`/signup?email=${encodeURIComponent(email.trim())}&step=otp`, { replace: true });
+        }
       }
-
-      // Write to localStorage BEFORE navigation so ProtectedRoute sees the token
-      localStorage.setItem(TOKEN_KEY, token);
-      localStorage.setItem(USER_KEY, JSON.stringify(staff));
-
-      toast.success(`Welcome, ${staff.name}!`);
-
-      // Navigate — ProtectedRoute reads localStorage directly, no React state lag
-      navigate('/dashboard', { replace: true });
-
-    } catch (err: any) {
-      const status      = err?.response?.status;
-      const message     = err?.response?.data?.message || err.message || 'Login failed';
-      const requiresOtp = err?.response?.data?.requiresOtp;
-
-      setError(`${status ? `[${status}] ` : ''}${message}`);
+    } catch {
+      setError('Something went wrong. Please try again.');
       setLoading(false);
-
-      if (requiresOtp) {
-        toast('Please verify your email first.', { icon: '📧' });
-        navigate(`/signup?email=${encodeURIComponent(email.trim())}&step=otp`, { replace: true });
-      }
     }
   };
 
