@@ -97,8 +97,14 @@ export default function ReadyOrdersPage() {
     }
   };
 
-  const buildMapsUrl = (address: string) =>
-    `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  const buildMapsUrl = (order: Order) => {
+    // Use exact GPS coordinates if available (much more accurate for navigation)
+    if (order.deliveryLocation?.latitude && order.deliveryLocation?.longitude) {
+      return `https://www.google.com/maps/dir/?api=1&destination=${order.deliveryLocation.latitude},${order.deliveryLocation.longitude}`;
+    }
+    // Fallback to text address
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.address || '')}`;
+  };
 
   return (
     <div className="space-y-5">
@@ -212,7 +218,7 @@ export default function ReadyOrdersPage() {
 
                     {address ? (
                       <a
-                        href={buildMapsUrl(address)}
+                        href={buildMapsUrl(order)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="btn-secondary flex items-center justify-center gap-1.5 text-sm py-2.5"

@@ -40,6 +40,7 @@ export interface Order {
   totalAmount: number;
   note: string;
   address: string;
+  deliveryLocation?: { latitude: number; longitude: number } | null;
   status: OrderStatus;
   paymentStatus: 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
   billId: string | null;

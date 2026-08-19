@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { BellRing, Clock, Check, X, Loader2 } from 'lucide-react';
+import { BellRing, Clock, Check, Loader2, Table2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import API from '../lib/api';
 import { socket } from '../context/SocketContext';
@@ -10,10 +10,21 @@ function elapsed(date: string) {
   return m < 1 ? 'Just now' : m < 60 ? `${m}m ago` : `${Math.floor(m/60)}h ago`;
 }
 
+// Group requests by table number
+function groupByTable(requests: WaiterRequest[]): Map<number, WaiterRequest[]> {
+  const map = new Map<number, WaiterRequest[]>();
+  for (const req of requests) {
+    const existing = map.get(req.tableNumber) || [];
+    existing.push(req);
+    map.set(req.tableNumber, existing);
+  }
+  return new Map([...map.entries()].sort((a, b) => a[0] - b[0]));
+}
+
 export default function WaiterCallsPage() {
   const [requests, setRequests] = useState<WaiterRequest[]>([]);
   const [loading,  setLoading]  = useState(true);
-  const [acting,   setActing]   = useState<string | null>(null);
+  const [resolving, setResolving] = useState<number | null>(null); // table number being resolved
 
   const fetchRequests = useCallback(async () => {
     try {
@@ -36,41 +47,35 @@ export default function WaiterCallsPage() {
       toast(`Table ${req.tableNumber} is calling for a waiter`, { icon: '🔔' });
     };
 
-    const onUpdate = (payload: { _id: string; status: string }) => {
+    const onUpdate = (payload: { _id: string; status: string; tableNumber?: number }) => {
       if (payload.status === 'COMPLETED') {
         setRequests(p => p.filter(r => r._id !== payload._id));
       }
     };
 
-    socket.on('waiter_requested',      onNew);
+    socket.on('waiter_requested',       onNew);
     socket.on('waiter_request_updated', onUpdate);
     return () => {
-      socket.off('waiter_requested',      onNew);
+      socket.off('waiter_requested',       onNew);
       socket.off('waiter_request_updated', onUpdate);
     };
   }, [fetchRequests]);
 
-  const resolve = async (req: WaiterRequest) => {
-    setActing(req._id);
+  const handleResolveTable = async (tableNumber: number) => {
+    setResolving(tableNumber);
     try {
-      await API.patch(`/waiter-requests/${req._id}/status`, { status: 'COMPLETED' });
-      setRequests(p => p.filter(r => r._id !== req._id));
-      toast.success(`Table ${req.tableNumber} resolved`);
+      await API.patch(`/waiter-requests/resolve-table/${tableNumber}`);
+      // Remove all requests for this table from UI
+      setRequests(p => p.filter(r => r.tableNumber !== tableNumber));
+      toast.success(`Table ${tableNumber} resolved`);
     } catch (err: any) {
-      toast.error(err?.response?.data?.message || 'Failed to resolve');
-    } finally { setActing(null); }
+      toast.error(err?.response?.data?.message || 'Failed to resolve table');
+    } finally {
+      setResolving(null);
+    }
   };
 
-  const dismiss = async (req: WaiterRequest) => {
-    setActing(req._id + '_d');
-    try {
-      await API.delete(`/waiter-requests/${req._id}`);
-      setRequests(p => p.filter(r => r._id !== req._id));
-      toast('Dismissed');
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message || 'Failed to dismiss');
-    } finally { setActing(null); }
-  };
+  const grouped = groupByTable(requests);
 
   return (
     <div className="space-y-5">
@@ -80,48 +85,63 @@ export default function WaiterCallsPage() {
         </div>
         <div>
           <h1 className="text-xl font-bold text-white">Waiter Calls</h1>
-          <p className="text-xs text-gray-400">{requests.length} active call{requests.length !== 1 ? 's' : ''}</p>
+          <p className="text-xs text-gray-400">{requests.length} active call{requests.length !== 1 ? 's' : ''} from {grouped.size} table{grouped.size !== 1 ? 's' : ''}</p>
         </div>
       </div>
 
       {loading ? (
-        <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="skeleton h-24 rounded-2xl" />)}</div>
+        <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="skeleton h-32 rounded-2xl" />)}</div>
       ) : requests.length === 0 ? (
         <div className="card py-16 text-center">
           <BellRing className="w-10 h-10 mx-auto text-gray-600 mb-3" />
           <p className="text-gray-400">No active waiter calls</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {requests.map(req => (
-            <div key={req._id} className="card p-4 border-orange-500/30 flex items-center gap-4">
-              <div className="w-12 h-12 shrink-0 rounded-xl bg-orange-500/20 flex items-center justify-center">
-                <BellRing className="w-6 h-6 text-orange-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-bold text-white">Table {req.tableNumber}</p>
-                <p className="text-sm text-gray-400">{req.customerName || 'Customer needs assistance'}</p>
-                <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                  <Clock className="w-3 h-3" />{elapsed(req.createdAt)}
-                </p>
-              </div>
-              <div className="flex gap-2 shrink-0">
+        <div className="space-y-4">
+          {[...grouped.entries()].map(([tableNumber, tableRequests]) => (
+            <div key={tableNumber} className="card p-5 border-orange-500/30 space-y-4">
+              {/* Table header */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center">
+                    <Table2 className="w-5 h-5 text-orange-400" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-white text-lg">Table {tableNumber}</p>
+                    <p className="text-xs text-gray-400">
+                      {tableRequests.length} request{tableRequests.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                </div>
+
                 <button
-                  onClick={() => resolve(req)}
-                  disabled={!!acting}
-                  className="btn-success px-3 py-2.5 text-xs"
-                  title="Resolve"
+                  onClick={() => handleResolveTable(tableNumber)}
+                  disabled={resolving === tableNumber}
+                  className="btn-success px-4 py-2.5 text-sm"
                 >
-                  {acting === req._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Check className="w-4 h-4" /> Resolve</>}
+                  {resolving === tableNumber
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Resolving…</>
+                    : <><Check className="w-4 h-4" /> Resolve Table {tableNumber}</>
+                  }
                 </button>
-                <button
-                  onClick={() => dismiss(req)}
-                  disabled={!!acting}
-                  className="btn-secondary px-3 py-2.5 text-xs"
-                  title="Dismiss"
-                >
-                  {acting === req._id + '_d' ? <Loader2 className="w-4 h-4 animate-spin" /> : <><X className="w-4 h-4" /> Dismiss</>}
-                </button>
+              </div>
+
+              {/* Individual requests */}
+              <div className="space-y-2 pl-2 border-l-2 border-orange-500/20 ml-5">
+                {tableRequests.map(req => (
+                  <div key={req._id} className="flex items-center gap-3 py-2 px-3 rounded-lg
+                                                bg-gray-800/50">
+                    <BellRing className="w-4 h-4 text-orange-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white">
+                        {req.customerName || 'Customer needs assistance'}
+                      </p>
+                    </div>
+                    <p className="text-xs text-gray-500 flex items-center gap-1 shrink-0">
+                      <Clock className="w-3 h-3" />{elapsed(req.createdAt)}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
           ))}
