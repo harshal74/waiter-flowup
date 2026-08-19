@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { CheckSquare, Clock, Loader2, MapPin, Table2 } from 'lucide-react';
+import { CheckSquare, Clock, Loader2, MapPin, Table2, Phone, Navigation } from 'lucide-react';
 import toast from 'react-hot-toast';
 import API from '../lib/api';
 import { socket } from '../context/SocketContext';
@@ -13,12 +13,15 @@ function elapsed(date: string) {
 export default function ReadyOrdersPage() {
   const [orders,  setOrders]  = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [serving, setServing] = useState<string | null>(null);
+  const [acting,  setActing]  = useState<string | null>(null);
 
   const fetchOrders = useCallback(async () => {
     try {
       const res = await API.get('/staff/orders');
-      setOrders((res.data.data || []).filter((o: Order) => o.status === 'READY'));
+      // Show READY + OUT_FOR_DELIVERY orders on this page
+      setOrders((res.data.data || []).filter(
+        (o: Order) => o.status === 'READY' || o.status === 'OUT_FOR_DELIVERY'
+      ));
     } catch { toast.error('Failed to load ready orders'); }
     finally { setLoading(false); }
   }, []);
@@ -27,18 +30,14 @@ export default function ReadyOrdersPage() {
     fetchOrders();
 
     const onUpdate = (p: { orderId: string; status: OrderStatus }) => {
-      if (p.status === 'READY') {
-        // Another client moved an order to READY — add it if not present
-        // We don't have the full order object here, so refetch silently
+      if (p.status === 'READY' || p.status === 'OUT_FOR_DELIVERY') {
         fetchOrders();
       } else {
-        // Order left READY (served/cancelled) — remove from list
         setOrders(prev => prev.filter(o => o._id !== p.orderId));
       }
     };
 
     const onNew = (order: Order) => {
-      // A brand-new order that is somehow already READY (edge case)
       if (order.status === 'READY') {
         setOrders(p => p.some(o => o._id === order._id) ? p : [order, ...p]);
       }
@@ -53,8 +52,9 @@ export default function ReadyOrdersPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Dine-in: READY → COMPLETED
   const handleServe = async (order: Order) => {
-    setServing(order._id);
+    setActing(order._id);
     try {
       await API.patch(`/staff/orders/${order._id}/deliver`);
       setOrders(p => p.filter(o => o._id !== order._id));
@@ -62,9 +62,43 @@ export default function ReadyOrdersPage() {
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to serve order');
     } finally {
-      setServing(null);
+      setActing(null);
     }
   };
+
+  // Delivery: READY → OUT_FOR_DELIVERY
+  const handleDispatch = async (order: Order) => {
+    setActing(order._id);
+    try {
+      await API.patch(`/staff/orders/${order._id}/dispatch`);
+      // Update local state to reflect OUT_FOR_DELIVERY
+      setOrders(p => p.map(o =>
+        o._id === order._id ? { ...o, status: 'OUT_FOR_DELIVERY' as OrderStatus } : o
+      ));
+      toast.success(`Order #${order.orderNumber} dispatched!`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Failed to dispatch order');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  // Delivery: OUT_FOR_DELIVERY → COMPLETED
+  const handleCompleteDelivery = async (order: Order) => {
+    setActing(order._id);
+    try {
+      await API.patch(`/staff/orders/${order._id}/deliver`);
+      setOrders(p => p.filter(o => o._id !== order._id));
+      toast.success(`Delivery #${order.orderNumber} completed!`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Failed to complete delivery');
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const buildMapsUrl = (address: string) =>
+    `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 
   return (
     <div className="space-y-5">
@@ -90,14 +124,18 @@ export default function ReadyOrdersPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {orders.map(order => {
-            const isDineIn   = order.orderType === 'DINE_IN';
-            const tableNum   = order.tableNumber;
-            const address    = order.address;
+            const isDineIn       = order.orderType === 'DINE_IN';
+            const isDelivery     = order.orderType === 'DELIVERY';
+            const isDispatched   = order.status === 'OUT_FOR_DELIVERY';
+            const tableNum       = order.tableNumber;
+            const address        = order.address;
+            const customerMobile = order.customerId?.mobile;
+            const customerName   = order.customerId?.name;
 
             return (
-            <div key={order._id} className="card p-5 space-y-4 border-green-500/40">
+            <div key={order._id} className={`card p-5 space-y-4 ${isDispatched ? 'border-blue-500/40' : 'border-green-500/40'}`}>
 
-              {/* ── Serve destination — most prominent info ── */}
+              {/* ── Serve destination ── */}
               {isDineIn && tableNum ? (
                 <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl
                                 bg-teal-500/15 border border-teal-500/40">
@@ -110,7 +148,7 @@ export default function ReadyOrdersPage() {
                   <MapPin className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-[10px] font-semibold text-blue-400 uppercase tracking-wide">
-                      Delivery
+                      {isDispatched ? '🛵 Out for Delivery' : 'Delivery'}
                     </p>
                     <p className="text-sm text-white font-medium leading-snug">
                       {address || 'Address not provided'}
@@ -123,7 +161,7 @@ export default function ReadyOrdersPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="font-bold text-white">#{order.orderNumber}</p>
-                  <p className="text-sm text-gray-400">{order.customerId?.name || 'Guest'}</p>
+                  <p className="text-sm text-gray-400">{customerName || 'Guest'}</p>
                 </div>
                 <p className="text-xs text-gray-500 flex items-center gap-1">
                   <Clock className="w-3 h-3" />{elapsed(order.createdAt)}
@@ -142,18 +180,76 @@ export default function ReadyOrdersPage() {
                 )}
               </div>
 
-              <button
-                onClick={() => handleServe(order)}
-                disabled={serving === order._id}
-                className="btn-success w-full"
-              >
-                {serving === order._id
-                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Serving…</>
-                  : isDineIn
-                    ? `✓ Serve to Table ${tableNum ?? '?'}`
-                    : '✓ Dispatch Delivery'
-                }
-              </button>
+              {/* ── Actions ── */}
+              {isDineIn ? (
+                /* Dine-in: Serve to Table (READY → COMPLETED) */
+                <button
+                  onClick={() => handleServe(order)}
+                  disabled={acting === order._id}
+                  className="btn-success w-full"
+                >
+                  {acting === order._id
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Serving…</>
+                    : `✓ Serve to Table ${tableNum ?? '?'}`
+                  }
+                </button>
+              ) : isDispatched ? (
+                /* Delivery: Already dispatched — show Call/Navigate + Complete */
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {customerMobile ? (
+                      <a
+                        href={`tel:${customerMobile}`}
+                        className="btn-secondary flex items-center justify-center gap-1.5 text-sm py-2.5"
+                      >
+                        <Phone className="w-4 h-4" /> Call
+                      </a>
+                    ) : (
+                      <button disabled className="btn-secondary opacity-50 text-sm py-2.5 cursor-not-allowed">
+                        <Phone className="w-4 h-4" /> No Phone
+                      </button>
+                    )}
+
+                    {address ? (
+                      <a
+                        href={buildMapsUrl(address)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-secondary flex items-center justify-center gap-1.5 text-sm py-2.5"
+                      >
+                        <Navigation className="w-4 h-4" /> Navigate
+                      </a>
+                    ) : (
+                      <button disabled className="btn-secondary opacity-50 text-sm py-2.5 cursor-not-allowed">
+                        <Navigation className="w-4 h-4" /> No Address
+                      </button>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => handleCompleteDelivery(order)}
+                    disabled={acting === order._id}
+                    className="btn-success w-full"
+                  >
+                    {acting === order._id
+                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Completing…</>
+                      : '✓ Mark Delivered'
+                    }
+                  </button>
+                </div>
+              ) : (
+                /* Delivery: READY — Dispatch button */
+                <button
+                  onClick={() => handleDispatch(order)}
+                  disabled={acting === order._id}
+                  className="btn-primary w-full"
+                >
+                  {acting === order._id
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Dispatching…</>
+                    : '🛵 Dispatch Delivery'
+                  }
+                </button>
+              )}
             </div>
             );
           })}
