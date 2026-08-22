@@ -43,6 +43,7 @@ export interface Order {
   deliveryLocation?: { latitude: number; longitude: number } | null;
   status: OrderStatus;
   paymentStatus: 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
+  paymentMethod: 'COD' | 'ONLINE';
   billId: string | null;
   acceptedBy?: string | null;
   preparedBy?: string | null;

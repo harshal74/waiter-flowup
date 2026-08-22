@@ -3,6 +3,7 @@ import { CheckSquare, Clock, Loader2, MapPin, Table2, Phone, Navigation } from '
 import toast from 'react-hot-toast';
 import API from '../lib/api';
 import { socket } from '../context/SocketContext';
+import PaymentBadge from '../components/PaymentBadge';
 import type { Order, OrderStatus } from '../types';
 
 function elapsed(date: string) {
@@ -167,7 +168,10 @@ export default function ReadyOrdersPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="font-bold text-white">#{order.orderNumber}</p>
-                  <p className="text-sm text-gray-400">{customerName || 'Guest'}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <p className="text-sm text-gray-400">{customerName || 'Guest'}</p>
+                    <PaymentBadge paymentMethod={order.paymentMethod} paymentStatus={order.paymentStatus} orderType={order.orderType} />
+                  </div>
                 </div>
                 <p className="text-xs text-gray-500 flex items-center gap-1">
                   <Clock className="w-3 h-3" />{elapsed(order.createdAt)}
