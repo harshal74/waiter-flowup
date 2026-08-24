@@ -1,7 +1,7 @@
 import { useState, FormEvent } from 'react';
-import { Link } from 'react-router-dom';
-import { Utensils, Loader2, CheckCircle2, Clock } from 'lucide-react';
-import API, { RESTAURANT_ID } from '../lib/api';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Utensils, Loader2, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import API from '../lib/api';
 import toast from 'react-hot-toast';
 import type { StaffRole } from '../types';
 
@@ -10,6 +10,9 @@ const ROLES: StaffRole[] = ['CHEF', 'WAITER', 'ASSISTANT'];
 type Step = 'form' | 'success';
 
 export default function SignupPage() {
+  const [searchParams] = useSearchParams();
+  const restaurantId = searchParams.get('restaurant') || '';
+
   const [step, setStep] = useState<Step>('form');
   const [form, setForm] = useState({
     name: '', email: '', mobile: '', password: '', confirmPassword: '',
@@ -48,7 +51,7 @@ export default function SignupPage() {
     setLoading(true);
     try {
       await API.post('/staff/signup', {
-        restaurantId: RESTAURANT_ID,
+        restaurantId,
         name:     form.name.trim(),
         email:    form.email.trim(),
         mobile:   form.mobile.trim(),
@@ -63,6 +66,24 @@ export default function SignupPage() {
       setLoading(false);
     }
   };
+
+  // Guard: require restaurant identifier in URL
+  if (!restaurantId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-950 px-4 py-10">
+        <div className="w-full max-w-sm text-center">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-red-500/20 flex items-center justify-center mb-4">
+            <AlertCircle className="w-7 h-7 text-red-400" />
+          </div>
+          <h1 className="text-xl font-bold text-white mb-2">Invalid Signup Link</h1>
+          <p className="text-gray-400 text-sm mb-6">
+            Please use the signup link provided by your restaurant. The link should include a restaurant identifier.
+          </p>
+          <Link to="/login" className="btn-primary inline-block px-6 py-2">Go to Login</Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-950 px-4 py-10">

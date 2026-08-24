@@ -23,6 +23,15 @@ const STATUS_STYLE: Record<TableStatus, { bg: string; text: string; border: stri
 
 const ACTIVE_ORDER_STATUSES = ['PENDING', 'ACCEPTED', 'PREPARING', 'READY'];
 
+// Only consider orders from today for table status (stale old orders should not affect tables)
+function isToday(dateStr: string): boolean {
+  const d = new Date(dateStr);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() &&
+         d.getMonth() === now.getMonth() &&
+         d.getDate() === now.getDate();
+}
+
 /**
  * Build a full table list from 1..totalTables, overlaying active statuses from
  * orders and waiter requests. All configured tables are always shown.
@@ -41,6 +50,8 @@ function buildTableList(
   // Overlay order statuses (process in priority order — lower priority first)
   orders.forEach(o => {
     if (!o.tableNumber) return;
+    if (o.orderType === 'DELIVERY') return;
+    if (o.paymentStatus === 'PAID') return;
     const t = o.tableNumber;
     const current = tableMap.get(t);
 
@@ -50,8 +61,19 @@ function buildTableList(
         tableMap.set(t, 'Occupied');
       }
     }
-    // Bill requested = order is completed/ready but payment is still pending
-    if ((o.status === 'READY' || o.status === 'COMPLETED') && o.paymentStatus === 'PENDING') {
+
+    // Completed but no bill generated yet — still occupied (today's orders only)
+    if (o.status === 'COMPLETED' && o.paymentStatus === 'PENDING' && !o.billId && isToday(o.createdAt)) {
+      if (current === 'Available') {
+        tableMap.set(t, 'Occupied');
+      }
+    }
+
+    // Bill Requested: bill generated (awaiting payment) — today only
+    if (
+      o.status === 'COMPLETED' && isToday(o.createdAt) &&
+      o.billId && o.paymentStatus === 'PENDING'
+    ) {
       tableMap.set(t, 'Bill Requested');
     }
   });
@@ -92,9 +114,16 @@ export default function TablesPage() {
   useEffect(() => {
     fetchAll();
 
-    const onOrderUpdate = (p: { orderId: string; status: string; paymentStatus?: string }) =>
+    const onOrderUpdate = (p: { orderId: string; status: string; paymentStatus?: string; billId?: string }) =>
       setOrders(prev => prev.map(o =>
-        o._id === p.orderId ? { ...o, status: p.status as any } : o
+        o._id === p.orderId
+          ? {
+              ...o,
+              status: p.status as Order['status'],
+              ...(p.paymentStatus ? { paymentStatus: p.paymentStatus as Order['paymentStatus'] } : {}),
+              ...(p.billId !== undefined ? { billId: p.billId } : {}),
+            }
+          : o
       ));
 
     const onNewOrder = (order: Order) =>

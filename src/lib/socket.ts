@@ -1,7 +1,16 @@
 import { io, Socket } from 'socket.io-client';
 
-export const RESTAURANT_ID =
-  (import.meta.env.VITE_RESTAURANT_ID as string) || '';
+// Derive restaurantId from the stored Staff JWT (trusted source)
+function getRestaurantIdFromToken(): string {
+  try {
+    const token = localStorage.getItem('flowup_staff_token');
+    if (!token) return '';
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.restaurantId || '';
+  } catch {
+    return '';
+  }
+}
 
 // In dev: VITE_SOCKET_URL = http://localhost:5000
 // In prod: set VITE_SOCKET_URL on Netlify to your backend URL
@@ -13,7 +22,7 @@ const socket: Socket = io(SOCKET_URL, {
   reconnection: true,
   reconnectionAttempts: 10,
   reconnectionDelay: 2000,
-  query: { restaurantId: RESTAURANT_ID },
+  query: { get restaurantId() { return getRestaurantIdFromToken(); } },
   auth: {
     get token() {
       return localStorage.getItem('flowup_staff_token') || '';
