@@ -163,6 +163,8 @@ function KDSOrderCard({ order, isNew }: { order: Order; isNew: boolean }) {
           </p>
           {order.tableNumber ? (
             <p className="text-sm font-semibold text-teal-400 mt-0.5">Table {order.tableNumber}</p>
+          ) : order.orderType === 'TAKE_AWAY' ? (
+            <p className="text-xs text-amber-400 mt-0.5">🛍 Take Away</p>
           ) : (
             <p className="text-xs text-blue-400 mt-0.5">🛵 Delivery</p>
           )}

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Receipt, Loader2, ChevronDown, ChevronUp, CheckCircle, XCircle, MessageCircle, Search, RefreshCw, X } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { Receipt, Loader2, ChevronDown, ChevronUp, CheckCircle, XCircle, MessageCircle, Search, RefreshCw, X, AlertCircle, CalendarCheck } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
 import API from '../lib/api';
@@ -17,7 +18,12 @@ function buildUpiUrl(upiId: string, amount: number, restaurantName: string): str
   return `upi://pay?${params.toString()}`;
 }
 
-function buildWhatsAppMessage(bill: Bill, customerName: string, restaurantName: string): string {
+function buildWhatsAppMessage(
+  bill: Bill,
+  customerName: string,
+  restaurantName: string,
+  gstSettings?: { sgstRate: number; cgstRate: number },
+): string {
   const date = new Date(bill.createdAt).toLocaleString('en-IN', {
     day: 'numeric', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
@@ -25,8 +31,23 @@ function buildWhatsAppMessage(bill: Bill, customerName: string, restaurantName: 
   const itemLines = bill.items
     .map(i => `  • ${i.quantity}× ${i.name} — ₹${i.total.toFixed(2)}`)
     .join('\n');
-  const tableInfo   = bill.tableNumber ? `Table: ${bill.tableNumber}\n` : '';
+  const tableInfo    = bill.tableNumber ? `Table: ${bill.tableNumber}\n` : '';
   const discountLine = bill.discount > 0 ? `Discount: −₹${bill.discount.toFixed(2)}\n` : '';
+
+  // Build GST lines from bill values — never recalculate from subtotal
+  const sgst = bill.sgst ?? 0;
+  const cgst = bill.cgst ?? 0;
+  let gstLines = '';
+  if (sgst > 0 || cgst > 0) {
+    // New bill: show SGST + CGST separately
+    const sgstLabel = gstSettings?.sgstRate ? `(${gstSettings.sgstRate}%)` : '';
+    const cgstLabel = gstSettings?.cgstRate ? `(${gstSettings.cgstRate}%)` : '';
+    gstLines = `SGST ${sgstLabel}: ₹${sgst.toFixed(2)}\nCGST ${cgstLabel}: ₹${cgst.toFixed(2)}\n`;
+  } else if (bill.gst > 0) {
+    // Legacy bill: only combined gst, no sgst/cgst stored
+    gstLines = `GST: ₹${bill.gst.toFixed(2)}\n`;
+  }
+  // GST disabled: gstLines = '' → nothing shown
 
   return (
     `🧾 *Bill from ${restaurantName}*\n` +
@@ -35,8 +56,8 @@ function buildWhatsAppMessage(bill: Bill, customerName: string, restaurantName: 
     `${tableInfo}` +
     `\n*Items:*\n${itemLines}\n\n` +
     `Subtotal: ₹${bill.subtotal.toFixed(2)}\n` +
-    `GST (5%): ₹${bill.gst.toFixed(2)}\n` +
-    `${discountLine}` +
+    gstLines +
+    discountLine +
     `*Total: ₹${bill.grandTotal.toFixed(2)}*\n\n` +
     `Payment: ${bill.paymentMethod}\n\n` +
     `Thank you for dining with us! 🙏`
@@ -48,7 +69,28 @@ interface BillDetail {
   customer: { name: string; mobile: string };
 }
 
+interface RemainingOrder {
+  _id: string;
+  orderNumber: string;
+  totalAmount: number;
+  subtotalAmount?: number;
+  tableNumber: number;
+  customerName: string;
+  items?: { name: string; quantity: number; price: number; subtotal: number }[];
+  createdAt: string;
+}
+
+/** Navigation state passed from ReadyOrdersPage after a COD delivery is completed. */
+type BillingNavigationState = {
+  preselectOrderId?: string;
+};
+
 export default function BillRequestsPage() {
+  const location = useLocation();
+  // Read the preselect ID once — it is only present when navigated from delivery completion.
+  const preselectOrderId =
+    (location.state as BillingNavigationState | null)?.preselectOrderId ?? null;
+
   const [orders,        setOrders]        = useState<Order[]>([]);
   const [loading,       setLoading]       = useState(true);
   const [refreshing,    setRefreshing]    = useState(false);
@@ -63,6 +105,18 @@ export default function BillRequestsPage() {
   // Payment settings from DB via API — never from env
   const [upiId,          setUpiId]          = useState('');
   const [restaurantName, setRestaurantName] = useState('FlowUp Restaurant');
+  // GST settings from backend bill response — never calculated independently
+  const [gstSettings,    setGstSettings]    = useState<{ gstEnabled: boolean; sgstRate: number; cgstRate: number }>({ gstEnabled: false, sgstRate: 0, cgstRate: 0 });
+  // Remaining unpaid orders at the same table after payment confirmed
+  const [remainingOrders, setRemainingOrders] = useState<RemainingOrder[]>([]);
+  // Reservation auto-completed after dine-in billing
+  interface ReservationCompletedInfo {
+    reservationId: string;
+    tableNumber: number;
+    guestName: string;
+    numberOfPeople: number;
+  }
+  const [reservationCompletedInfo, setReservationCompletedInfo] = useState<ReservationCompletedInfo | null>(null);
   // Search / filter
   const [customerSearch, setCustomerSearch] = useState('');
   const [tableSearch,    setTableSearch]    = useState('');
@@ -92,6 +146,17 @@ export default function BillRequestsPage() {
   // Initial load
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
+  // Preselect a specific order when navigated here from COD delivery completion.
+  // Waits until `orders` is populated so the ID can be verified against the fetched list.
+  // Only selects if the order actually exists in the billing list (backend is the authority).
+  // Runs at most once per navigation event — preselectOrderId is stable (from location.state).
+  useEffect(() => {
+    if (!preselectOrderId) return;
+    if (orders.some(o => o._id === preselectOrderId)) {
+      setSelected(prev => ({ ...prev, [preselectOrderId]: true }));
+    }
+  }, [orders, preselectOrderId]);
+
   const handleRefresh = () => fetchOrders({ silent: true });
 
   const toggleOrder = (id: string) =>
@@ -100,7 +165,9 @@ export default function BillRequestsPage() {
   const selectedIds = Object.entries(selected).filter(([, v]) => v).map(([k]) => k);
 
   const subtotal   = orders.filter(o => selected[o._id]).reduce((s, o) => s + o.totalAmount, 0);
-  const gst        = Math.round(subtotal * 0.05 * 100) / 100;
+  // GST is calculated by the backend — do NOT compute it in the frontend.
+  // Show 0 in the pre-generation preview; actual value comes from backend bill response.
+  const gst        = 0; // preview only
   const grandTotal = Math.max(0, subtotal + gst - discount);
 
   const handleGenerate = async () => {
@@ -114,6 +181,11 @@ export default function BillRequestsPage() {
       // Store UPI settings from DB — do NOT use env vars
       setUpiId(res.data.paymentSettings?.upiId || '');
       setRestaurantName(res.data.paymentSettings?.restaurantName || 'FlowUp Restaurant');
+      setGstSettings({
+        gstEnabled: res.data.paymentSettings?.gstEnabled ?? false,
+        sgstRate:   res.data.paymentSettings?.sgstRate   ?? 0,
+        cgstRate:   res.data.paymentSettings?.cgstRate   ?? 0,
+      });
       toast.success('Bill generated!');
       setSelected({});
       fetchOrders({ silent: true });
@@ -126,10 +198,19 @@ export default function BillRequestsPage() {
     if (!activeBill) return;
     setConfirmLoad(true);
     try {
-      await API.patch(`/billing/${activeBill.bill._id}/confirm`);
+      const res = await API.patch(`/billing/${activeBill.bill._id}/confirm`);
       toast.success('Payment confirmed! Bill closed.');
       setActiveBill(null);
       fetchOrders({ silent: true });
+      // Show popup if there are still unpaid orders at the same table
+      const remaining: RemainingOrder[] = res.data?.remainingOrders || [];
+      if (remaining.length > 0) {
+        setRemainingOrders(remaining);
+      }
+      // Show reservation-completed notification if an ARRIVED reservation was auto-completed
+      if (res.data?.reservationCompleted) {
+        setReservationCompletedInfo(res.data.reservationCompleted);
+      }
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to confirm payment');
     } finally { setConfirmLoad(false); }
@@ -279,9 +360,36 @@ export default function BillRequestsPage() {
                   <div className="flex justify-between text-gray-300">
                     <span>Subtotal</span><span>₹{bill.subtotal.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between text-gray-300">
-                    <span>GST (5%)</span><span>₹{bill.gst.toFixed(2)}</span>
-                  </div>
+                  {/* GST rows — use backend bill values; never recalculate */}
+                  {(() => {
+                    const sgst = bill.sgst ?? 0;
+                    const cgst = bill.cgst ?? 0;
+                    if (sgst > 0 || cgst > 0) {
+                      // New bill: SGST + CGST stored separately
+                      const sgstLabel = gstSettings.sgstRate > 0 ? ` (${gstSettings.sgstRate}%)` : '';
+                      const cgstLabel = gstSettings.cgstRate > 0 ? ` (${gstSettings.cgstRate}%)` : '';
+                      return (
+                        <>
+                          <div className="flex justify-between text-gray-300">
+                            <span>SGST{sgstLabel}</span><span>₹{sgst.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between text-gray-300">
+                            <span>CGST{cgstLabel}</span><span>₹{cgst.toFixed(2)}</span>
+                          </div>
+                        </>
+                      );
+                    }
+                    if (bill.gst > 0) {
+                      // Legacy bill: only combined gst — show without hardcoded "5%"
+                      return (
+                        <div className="flex justify-between text-gray-300">
+                          <span>GST</span><span>₹{bill.gst.toFixed(2)}</span>
+                        </div>
+                      );
+                    }
+                    // GST disabled or zero — show nothing
+                    return null;
+                  })()}
                   {bill.discount > 0 && (
                     <div className="flex justify-between text-green-400">
                       <span>Discount</span><span>−₹{bill.discount.toFixed(2)}</span>
@@ -325,7 +433,7 @@ export default function BillRequestsPage() {
                 {/* WhatsApp share */}
                 {mobile && (
                   <a
-                    href={`https://wa.me/${mobile.replace(/\D/g, '').replace(/^0/, '91')}?text=${encodeURIComponent(buildWhatsAppMessage(bill, activeBill.customer.name, restaurantName))}`}
+                    href={`https://wa.me/${mobile.replace(/\D/g, '').replace(/^0/, '91')}?text=${encodeURIComponent(buildWhatsAppMessage(bill, activeBill.customer.name, restaurantName, gstSettings))}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl
@@ -367,6 +475,131 @@ export default function BillRequestsPage() {
         );
       })()}
 
+      {/* ── Remaining unpaid orders popup ──────────────────────── */}
+      {remainingOrders.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="card w-full max-w-sm overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-gray-700">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center">
+                  <AlertCircle className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm">
+                    Table {remainingOrders[0].tableNumber} — Still Unpaid
+                  </h3>
+                  <p className="text-xs text-gray-400">
+                    {remainingOrders.length} order{remainingOrders.length !== 1 ? 's' : ''} remaining
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRemainingOrders([])}
+                className="p-1.5 rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                <X className="w-4 h-4 text-gray-400" />
+              </button>
+            </div>
+
+            {/* Orders */}
+            <div className="px-5 py-4 space-y-3 max-h-72 overflow-y-auto">
+              {remainingOrders.map(order => (
+                <div key={order._id}
+                  className="rounded-xl border border-gray-700 bg-gray-800 overflow-hidden">
+                  {/* Order header */}
+                  <div className="flex items-center justify-between px-3 py-2.5
+                                  bg-gray-700/80 border-b border-gray-700">
+                    <div>
+                      <p className="text-sm font-bold text-white">#{order.orderNumber}</p>
+                      <p className="text-xs text-gray-400">{order.customerName}</p>
+                    </div>
+                    <span className="font-bold text-sm text-green-400">₹{order.totalAmount.toFixed(2)}</span>
+                  </div>
+                  {/* Items */}
+                  <div className="px-3 py-2 space-y-1">
+                    {order.items && order.items.length > 0 ? (
+                      <>
+                        {order.items.map((item, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs">
+                            <span className="text-gray-300 flex-1 min-w-0 pr-2 truncate">
+                              <span className="font-semibold text-white">{item.quantity}×</span>{' '}{item.name}
+                            </span>
+                            <span className="font-medium text-white shrink-0">
+                              ₹{item.subtotal.toFixed(2)}
+                            </span>
+                          </div>
+                        ))}
+                        <div className="flex items-center justify-between text-xs pt-1.5
+                                        border-t border-gray-700 mt-1">
+                          <span className="text-gray-400 font-medium">Order Total</span>
+                          <span className="font-bold text-white">₹{order.totalAmount.toFixed(2)}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-xs text-gray-500 italic py-1">Order details unavailable</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 px-5 pb-5">
+              <button
+                onClick={() => setRemainingOrders([])}
+                className="btn-secondary flex-1 text-sm"
+              >
+                Later
+              </button>
+              <button
+                onClick={() => {
+                  // Pre-select all remaining orders
+                  const newSelected: Record<string, boolean> = {};
+                  remainingOrders.forEach(o => { newSelected[o._id] = true; });
+                  setSelected(newSelected);
+                  setRemainingOrders([]);
+                }}
+                className="btn-primary flex-1 text-sm"
+              >
+                <Receipt className="w-4 h-4" />
+                Create Bill
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reservation Completed popup ──────────────────────── */}
+      {reservationCompletedInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+          onClick={() => setReservationCompletedInfo(null)}>
+          <div className="card w-full max-w-sm p-6 shadow-2xl text-center space-y-4"
+            onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mx-auto">
+              <CalendarCheck className="w-6 h-6 text-green-400" />
+            </div>
+            <div>
+              <h3 className="font-bold text-white text-base mb-1">Reservation Completed</h3>
+              <p className="text-sm text-gray-400">
+                <span className="font-semibold text-white">{reservationCompletedInfo.guestName}</span>
+                {`'s reservation for Table ${reservationCompletedInfo.tableNumber}`}
+                {reservationCompletedInfo.numberOfPeople > 0 &&
+                  ` (${reservationCompletedInfo.numberOfPeople} ${reservationCompletedInfo.numberOfPeople === 1 ? 'person' : 'people'})`
+                }
+                {' '}has been completed after dine-in billing.
+              </p>
+            </div>
+            <button
+              onClick={() => setReservationCompletedInfo(null)}
+              className="btn-success w-full"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Orders + Summary grid ───────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
@@ -396,7 +629,9 @@ export default function BillRequestsPage() {
             <div
               key={order._id}
               className={`card p-4 transition-all cursor-pointer ${
-                selected[order._id] ? 'border-primary-500' : 'border-gray-700'
+                selected[order._id]
+                  ? '!bg-orange-500/20 border-orange-400 ring-1 ring-orange-400/40'
+                  : 'border-gray-700 hover:border-gray-600'
               }`}
             >
               <div className="flex items-center gap-3">
@@ -453,7 +688,7 @@ export default function BillRequestsPage() {
               <span>Subtotal</span><span>₹{subtotal.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-gray-300">
-              <span>GST (5%)</span><span>₹{gst.toFixed(2)}</span>
+              <span>GST (preview)</span><span>₹{gst.toFixed(2)}</span>
             </div>
           </div>
 

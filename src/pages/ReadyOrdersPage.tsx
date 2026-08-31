@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { CheckSquare, Clock, Loader2, MapPin, Table2, Phone, Navigation } from 'lucide-react';
 import toast from 'react-hot-toast';
 import API from '../lib/api';
@@ -15,6 +16,7 @@ export default function ReadyOrdersPage() {
   const [orders,  setOrders]  = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting,  setActing]  = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const fetchOrders = useCallback(async () => {
     try {
@@ -91,6 +93,15 @@ export default function ReadyOrdersPage() {
       await API.patch(`/staff/orders/${order._id}/deliver`);
       setOrders(p => p.filter(o => o._id !== order._id));
       toast.success(`Delivery #${order.orderNumber} completed!`);
+      // Redirect to Billing and preselect this order only if payment is still pending (COD).
+      // ONLINE + PAID orders do not need billing — no redirect for them.
+      if (
+        order.orderType    === 'DELIVERY' &&
+        order.paymentMethod === 'COD'     &&
+        order.paymentStatus === 'PENDING'
+      ) {
+        navigate('/bill-requests', { state: { preselectOrderId: order._id } });
+      }
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to complete delivery');
     } finally {
@@ -133,6 +144,7 @@ export default function ReadyOrdersPage() {
           {orders.map(order => {
             const isDineIn       = order.orderType === 'DINE_IN';
             const isDelivery     = order.orderType === 'DELIVERY';
+            const isTakeAway     = order.orderType === 'TAKE_AWAY';
             const isDispatched   = order.status === 'OUT_FOR_DELIVERY';
             const tableNum       = order.tableNumber;
             const address        = order.address;
@@ -148,6 +160,17 @@ export default function ReadyOrdersPage() {
                                 bg-teal-500/15 border border-teal-500/40">
                   <Table2 className="w-4 h-4 text-teal-400 shrink-0" />
                   <span className="font-black text-teal-300 text-lg">Table {tableNum}</span>
+                </div>
+              ) : isTakeAway ? (
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl
+                                bg-amber-500/10 border border-amber-500/30">
+                  <span className="text-lg">🛍</span>
+                  <div>
+                    <p className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide">Take Away</p>
+                    <p className="text-sm text-white font-medium leading-snug">
+                      {customerName || 'Guest'}
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl
@@ -191,16 +214,18 @@ export default function ReadyOrdersPage() {
               </div>
 
               {/* ── Actions ── */}
-              {isDineIn ? (
-                /* Dine-in: Serve to Table (READY → COMPLETED) */
+              {(isDineIn || isTakeAway) ? (
+                /* Dine-in / Take Away: READY → COMPLETED (no dispatch) */
                 <button
                   onClick={() => handleServe(order)}
                   disabled={acting === order._id}
                   className="btn-success w-full"
                 >
                   {acting === order._id
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Serving…</>
-                    : `✓ Serve to Table ${tableNum ?? '?'}`
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> {isTakeAway ? 'Completing…' : 'Serving…'}</>
+                    : isTakeAway
+                      ? '✓ Order Ready for Pickup'
+                      : `✓ Serve to Table ${tableNum ?? '?'}`
                   }
                 </button>
               ) : isDispatched ? (

@@ -15,9 +15,25 @@ API.interceptors.request.use((config) => {
 API.interceptors.response.use(
   (res) => res,
   (error) => {
-    // Just reject — let each page/component handle errors themselves.
-    // DO NOT auto-clear localStorage or redirect here.
-    // A single failed API call (e.g. optional dashboard data) must not kill the session.
+    const status = error?.response?.status;
+    const data   = error?.response?.data;
+
+    // FIX SEC-3: Auto-logout only for definitive authentication rejections:
+    //   401 = token invalid/expired
+    //   403 with suspended/expired flag = restaurant blocked by platform
+    // Do NOT auto-logout for 403 that is a business-logic rejection
+    // (e.g. "order already in status X") — those are handled per-page.
+    const isAuthFailure =
+      status === 401 ||
+      (status === 403 && (data?.suspended || data?.expired));
+
+    if (isAuthFailure) {
+      localStorage.removeItem('flowup_staff_token');
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+
     return Promise.reject(error);
   }
 );

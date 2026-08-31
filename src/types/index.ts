@@ -31,7 +31,7 @@ export interface Order {
   orderNumber: string;
   restaurantId: string;
   customerId: { _id: string; name: string; mobile: string; address?: string } | null;
-  orderType: 'DINE_IN' | 'DELIVERY';
+  orderType: 'DINE_IN' | 'DELIVERY' | 'TAKE_AWAY';
   tableNumber: number | null;
   items: OrderItem[];
   totalItems: number;
@@ -71,6 +71,10 @@ export interface Bill {
   items: { name: string; quantity: number; price: number; total: number }[];
   subtotal: number;
   gst: number;
+  /** SGST amount — present on new bills; absent on legacy bills */
+  sgst?: number;
+  /** CGST amount — present on new bills; absent on legacy bills */
+  cgst?: number;
   discount: number;
   grandTotal: number;
   paymentStatus: 'Pending' | 'Paid' | 'Failed' | 'Refunded';
