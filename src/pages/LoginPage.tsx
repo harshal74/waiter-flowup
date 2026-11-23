@@ -98,7 +98,7 @@ export default function LoginPage() {
 
           <p className="text-center text-xs text-gray-500">
             Don't have an account?{' '}
-            <a href="/signup" className="text-primary-400 hover:text-primary-300 font-medium">Register</a>
+            <span className="text-gray-400">Ask your restaurant admin for a signup link.</span>
           </p>
         </div>
       </div>

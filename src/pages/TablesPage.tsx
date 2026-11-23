@@ -9,8 +9,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Table2, CalendarCheck, Pencil, Trash2, X, Loader2,
-  Users, User, Phone, Clock, CheckCircle, UserCheck, UserX,
+  Users, User, Phone, Clock, CheckCircle, UserCheck, UserX, ShoppingCart, Sparkles,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import API from '../lib/api';
 import { socket } from '../context/SocketContext';
@@ -44,12 +45,27 @@ interface TableReservation {
 
 type TableStatus =
   | 'Available' | 'Occupied' | 'Bill Requested'
-  | 'Waiter Requested' | 'Reserved';
+  | 'Waiter Requested' | 'Reserved' | 'Dirty' | 'Cleaning';
+
+interface StaffRef { staffId: string | null; name: string; role: string }
+
+interface TableClean {
+  _id: string;
+  tableNumber: number;
+  status: 'DIRTY' | 'CLEANING' | 'CLEAN';
+  active: boolean;
+  dirtyAt: string | null;
+  cleaningBy: StaffRef | null;
+  cleaningStartedAt: string | null;
+  cleanedBy: StaffRef | null;
+  cleanedAt: string | null;
+}
 
 interface TableInfo {
   number: number;
   status: TableStatus;
   reservations: TableReservation[];
+  clean?: TableClean;
 }
 
 // ── Styles ─────────────────────────────────────────────────────────
@@ -60,6 +76,8 @@ const TABLE_STATUS_STYLE: Record<TableStatus, { bg: string; text: string; border
   'Bill Requested':   { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/40' },
   'Waiter Requested': { bg: 'bg-red-500/10',    text: 'text-red-400',    border: 'border-red-500/40'    },
   'Reserved':         { bg: 'bg-blue-500/10',   text: 'text-blue-400',   border: 'border-blue-500/40'   },
+  'Dirty':            { bg: 'bg-yellow-500/10', text: 'text-yellow-400', border: 'border-yellow-500/40' },
+  'Cleaning':         { bg: 'bg-cyan-500/10',   text: 'text-cyan-400',   border: 'border-cyan-500/40'   },
 };
 
 const RES_STATUS_STYLE: Record<ReservationStatus, { badge: string; label: string }> = {
@@ -123,7 +141,7 @@ function isToday(dateStr: string): boolean {
 
 // ── Table list builder ─────────────────────────────────────────────
 
-function buildTableList(total: number, orders: Order[], waiterReqs: WaiterRequest[], reservations: TableReservation[]): TableInfo[] {
+function buildTableList(total: number, orders: Order[], waiterReqs: WaiterRequest[], reservations: TableReservation[], cleans: TableClean[]): TableInfo[] {
   const map = new Map<number, TableStatus>();
   for (let i = 1; i <= total; i++) map.set(i, 'Available');
 
@@ -133,6 +151,14 @@ function buildTableList(total: number, orders: Order[], waiterReqs: WaiterReques
     if (ACTIVE_ORDER_STATUSES.includes(o.status) && (cur === 'Available' || cur === 'Reserved')) map.set(t, 'Occupied');
     if (o.status === 'COMPLETED' && o.paymentStatus === 'PENDING' && !o.billId && isToday(o.createdAt) && (cur === 'Available' || cur === 'Reserved')) map.set(t, 'Occupied');
     if (o.status === 'COMPLETED' && isToday(o.createdAt) && o.billId && o.paymentStatus === 'PENDING') map.set(t, 'Bill Requested');
+  });
+
+  // Dirty / Cleaning outrank Available and Reserved, but never hide an active order.
+  const cleanMap = new Map<number, TableClean>();
+  cleans.forEach(c => {
+    if (!c.active) return;
+    cleanMap.set(c.tableNumber, c);
+    if (map.get(c.tableNumber) === 'Available') map.set(c.tableNumber, c.status === 'CLEANING' ? 'Cleaning' : 'Dirty');
   });
 
   waiterReqs.forEach(r => { if (r.tableNumber) map.set(r.tableNumber, 'Waiter Requested'); });
@@ -145,7 +171,7 @@ function buildTableList(total: number, orders: Order[], waiterReqs: WaiterReques
   resMap.forEach((_, t) => { if (map.get(t) === 'Available') map.set(t, 'Reserved'); });
 
   return Array.from(map.entries())
-    .map(([number, status]) => ({ number, status, reservations: resMap.get(number) || [] }))
+    .map(([number, status]) => ({ number, status, reservations: resMap.get(number) || [], clean: cleanMap.get(number) }))
     .sort((a, b) => a.number - b.number);
 }
 
@@ -300,6 +326,8 @@ function ReserveModal({ tableNumber, existing, onClose, onSaved }: ReserveModalP
 
 export default function TablesPage() {
   const { staff }  = useAuth();
+  const navigate   = useNavigate();
+  const [cleans,       setCleans]       = useState<TableClean[]>([]);
   const [orders,       setOrders]       = useState<Order[]>([]);
   const [waiter,       setWaiter]       = useState<WaiterRequest[]>([]);
   const [reservations, setReservations] = useState<TableReservation[]>([]);
@@ -315,12 +343,14 @@ export default function TablesPage() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [oRes, wRes, sRes, rRes] = await Promise.all([
+      const [oRes, wRes, sRes, rRes, cRes] = await Promise.all([
         API.get('/staff/orders'),
         API.get('/waiter-requests'),
         API.get('/settings'),
         API.get('/table-reservations?status=ACTIVE'),
+        API.get('/table-cleaning'),
       ]);
+      setCleans(cRes.data.data || []);
       setOrders(oRes.data.data || []);
       setWaiter(wRes.data.data || []);
       setTotalTables(sRes?.data?.data?.totalTables ?? 10);
@@ -355,6 +385,12 @@ export default function TablesPage() {
     const onResCancelled = (p: { _id: string }) =>
       setReservations(prev => prev.filter(x => x._id !== p._id));
 
+    const onClean = (c: TableClean) =>
+      setCleans(prev => c.active
+        ? (prev.some(x => x._id === c._id) ? prev.map(x => x._id === c._id ? c : x) : [...prev, c])
+        : prev.filter(x => x._id !== c._id));
+
+    socket.on('table_clean_updated',         onClean);
     socket.on('new_order',                   onNewOrder);
     socket.on('order_status_updated',        onOrderUpdate);
     socket.on('waiter_requested',            onWaiter);
@@ -364,6 +400,7 @@ export default function TablesPage() {
     socket.on('table_reservation_cancelled', onResCancelled);
 
     return () => {
+      socket.off('table_clean_updated',         onClean);
       socket.off('new_order',                   onNewOrder);
       socket.off('order_status_updated',        onOrderUpdate);
       socket.off('waiter_requested',            onWaiter);
@@ -382,6 +419,19 @@ export default function TablesPage() {
       toast.success(successMsg);
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Action failed.');
+    } finally { setActing(null); }
+  };
+
+  const doClean = async (c: TableClean, action: 'start' | 'complete') => {
+    setActing(c._id);
+    try {
+      const res = await API.patch(`/table-cleaning/${c._id}/${action}`);
+      const u: TableClean = res.data.data;
+      setCleans(prev => u.active ? prev.map(x => x._id === u._id ? u : x) : prev.filter(x => x._id !== u._id));
+      toast.success(action === 'start' ? `Cleaning Table ${c.tableNumber}.` : `Table ${c.tableNumber} is clean.`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Action failed.');
+      fetchAll();
     } finally { setActing(null); }
   };
 
@@ -408,7 +458,7 @@ export default function TablesPage() {
     } finally { setCancelling(false); }
   };
 
-  const tables  = buildTableList(totalTables, orders, waiter, reservations);
+  const tables  = buildTableList(totalTables, orders, waiter, reservations, cleans);
   const occupied = tables.filter(t => t.status !== 'Available').length;
 
   return (
@@ -446,6 +496,43 @@ export default function TablesPage() {
                 className={`card p-3 flex flex-col items-center gap-1 ${style.bg} border ${style.border}`}>
                 <p className="text-2xl font-black text-white">{table.number}</p>
                 <p className={`text-[10px] font-semibold text-center ${style.text} leading-tight`}>{table.status}</p>
+
+                {(isAvailable || (table.status === 'Reserved' && table.reservations.some(r => r.status === 'ARRIVED'))) && (
+                  <button onClick={() => navigate(`/tables/${table.number}/order`)}
+                    className="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg
+                               bg-green-500/20 hover:bg-green-500/30 text-green-400 text-[10px] font-medium transition-colors">
+                    <ShoppingCart className="w-3 h-3" /> Take Order
+                  </button>
+                )}
+
+                {table.clean && table.clean.status === 'DIRTY' && (
+                  <div className="w-full space-y-1">
+                    <p className="text-[10px] text-gray-500 text-center">
+                      Dirty since {table.clean.dirtyAt ? new Date(table.clean.dirtyAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                    </p>
+                    <button onClick={() => doClean(table.clean!, 'start')} disabled={acting === table.clean._id}
+                      className="w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg
+                                 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 text-[10px] font-medium transition-colors disabled:opacity-50">
+                      {acting === table.clean._id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      Start Cleaning
+                    </button>
+                  </div>
+                )}
+
+                {table.clean && table.clean.status === 'CLEANING' && (
+                  <div className="w-full space-y-1">
+                    <p className="text-[10px] text-gray-400 text-center truncate">
+                      By {table.clean.cleaningBy?.name || 'staff'}
+                      {table.clean.cleaningStartedAt ? ` · ${new Date(table.clean.cleaningStartedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+                    </p>
+                    <button onClick={() => doClean(table.clean!, 'complete')} disabled={acting === table.clean._id}
+                      className="w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg
+                                 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 text-[10px] font-medium transition-colors disabled:opacity-50">
+                      {acting === table.clean._id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
+                      Mark Clean
+                    </button>
+                  </div>
+                )}
 
                 {isAvailable && canMutate && (
                   <button onClick={() => setReserveModal({ tableNumber: table.number })}

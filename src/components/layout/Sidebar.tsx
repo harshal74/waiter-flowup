@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ChefHat, CheckSquare, BellRing,
-  Receipt, Table2, User, LogOut, Utensils, Monitor,
+  Receipt, Table2, User, LogOut, Utensils, Monitor, Package,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
@@ -25,6 +25,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/waiter-calls',  label: 'Waiter Calls',   icon: BellRing,        roles: ['ADMIN','WAITER','ASSISTANT'], badgeKey: 'waiterCallCount' },
   { to: '/bill-requests', label: 'Bill Requests',  icon: Receipt,         roles: ['ADMIN','WAITER'] },
   { to: '/tables',        label: 'Tables',         icon: Table2,          roles: ['ADMIN','WAITER','ASSISTANT'] },
+  { to: '/inventory',     label: 'Inventory',      icon: Package,         roles: ['ADMIN','ASSISTANT'] },
   { to: '/profile',       label: 'Profile',        icon: User,            roles: ['ADMIN','CHEF','WAITER','ASSISTANT'] },
 ];
 

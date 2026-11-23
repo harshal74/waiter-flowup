@@ -18,6 +18,9 @@ import BillRequestsPage from './pages/BillRequestsPage';
 import TablesPage       from './pages/TablesPage';
 import ProfilePage      from './pages/ProfilePage';
 import KDSPage          from './pages/KDSPage';
+import InventoryPage    from './pages/InventoryPage';
+import StaffOrderPage   from './pages/StaffOrderPage';
+import RoleRoute        from './components/layout/RoleRoute';
 
 export default function App() {
   return (
@@ -41,6 +44,8 @@ export default function App() {
                 <Route path="/waiter-calls"  element={<WaiterCallsPage />} />
                 <Route path="/bill-requests" element={<BillRequestsPage />} />
                 <Route path="/tables"        element={<TablesPage />} />
+                <Route path="/tables/:tableNumber/order" element={<RoleRoute roles={['ADMIN','WAITER','ASSISTANT']}><StaffOrderPage /></RoleRoute>} />
+                <Route path="/inventory"     element={<InventoryPage />} />
                 <Route path="/kds"           element={<KDSPage />} />
                 <Route path="/profile"       element={<ProfilePage />} />
                 <Route path="/"              element={<Navigate to="/dashboard" replace />} />
