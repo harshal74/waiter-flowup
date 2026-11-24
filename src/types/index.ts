@@ -68,7 +68,7 @@ export interface Bill {
   restaurantId: string;
   tableNumber: number | null;
   orderIds: string[];
-  items: { name: string; quantity: number; price: number; total: number }[];
+  items: { menuItemId?: string; name: string; quantity: number; price: number; total: number }[];
   subtotal: number;
   gst: number;
   /** SGST amount — present on new bills; absent on legacy bills */
@@ -82,4 +82,9 @@ export interface Bill {
   invoiceNumber: string;
   paidAt: string | null;
   createdAt: string;
+  /** Split billing — absent / "NONE" on single-payment bills */
+  splitType?: 'NONE' | 'EQUAL' | 'BY_ITEM' | 'CUSTOM';
+  splits?: import('../components/SplitBill').BillSplit[];
+  paidAmount?: number;
+  remainingAmount?: number;
 }

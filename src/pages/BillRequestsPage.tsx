@@ -5,6 +5,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
 import API from '../lib/api';
 import type { Order, Bill } from '../types';
+import { SplitEditor, SplitPayments, isSplitBill, type SplitRequest, type PayMethod } from '../components/SplitBill';
+import { Split } from 'lucide-react';
 
 // UPI deep-link builder — data comes from DB via API, never from env
 function buildUpiUrl(upiId: string, amount: number, restaurantName: string): string {
@@ -194,26 +196,65 @@ export default function BillRequestsPage() {
     } finally { setGenLoad(false); }
   };
 
+  /** Shared by single-payment confirm and the last split payment. */
+  const afterBillPaid = (data: any) => {
+    setActiveBill(null);
+    setShowSplitEditor(false);
+    fetchOrders({ silent: true });
+    // Show popup if there are still unpaid orders at the same table
+    const remaining: RemainingOrder[] = data?.remainingOrders || [];
+    if (remaining.length > 0) {
+      setRemainingOrders(remaining);
+    }
+    // Show reservation-completed notification if an ARRIVED reservation was auto-completed
+    if (data?.reservationCompleted) {
+      setReservationCompletedInfo(data.reservationCompleted);
+    }
+  };
+
   const handleConfirmPayment = async () => {
     if (!activeBill) return;
     setConfirmLoad(true);
     try {
       const res = await API.patch(`/billing/${activeBill.bill._id}/confirm`);
       toast.success('Payment confirmed! Bill closed.');
-      setActiveBill(null);
-      fetchOrders({ silent: true });
-      // Show popup if there are still unpaid orders at the same table
-      const remaining: RemainingOrder[] = res.data?.remainingOrders || [];
-      if (remaining.length > 0) {
-        setRemainingOrders(remaining);
-      }
-      // Show reservation-completed notification if an ARRIVED reservation was auto-completed
-      if (res.data?.reservationCompleted) {
-        setReservationCompletedInfo(res.data.reservationCompleted);
-      }
+      afterBillPaid(res.data);
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to confirm payment');
     } finally { setConfirmLoad(false); }
+  };
+
+  // ── Split bill ─────────────────────────────────────────────
+  const [showSplitEditor, setShowSplitEditor] = useState(false);
+  const [splitSaving,     setSplitSaving]     = useState(false);
+
+  const handleSplitBill = async (req: SplitRequest) => {
+    if (!activeBill) return;
+    setSplitSaving(true);
+    try {
+      const res = await API.patch(`/billing/${activeBill.bill._id}/split`, req);
+      setActiveBill(prev => prev ? { ...prev, bill: res.data.bill } : prev);
+      setShowSplitEditor(false);
+      toast.success(req.splitType === 'NONE' ? 'Split removed.' : "Bill split. Collect each person's payment.");
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Failed to split bill');
+    } finally { setSplitSaving(false); }
+  };
+
+  const handleConfirmSplit = async (splitId: string, method: PayMethod) => {
+    if (!activeBill) return;
+    try {
+      const res = await API.patch(`/billing/${activeBill.bill._id}/splits/${splitId}/confirm`, { paymentMethod: method });
+      if (res.data?.billPaid) {
+        toast.success('Everyone has paid. Bill closed.');
+        afterBillPaid(res.data);
+      } else {
+        setActiveBill(prev => prev ? { ...prev, bill: res.data.bill } : prev);
+        toast.success(res.data?.message || 'Split paid.');
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Failed to confirm split payment');
+    }
   };
 
   const handleCancelBill = async () => {
@@ -223,6 +264,7 @@ export default function BillRequestsPage() {
       await API.delete(`/billing/${activeBill.bill._id}`);
       toast('Bill cancelled. Orders returned to unpaid list.');
       setActiveBill(null);
+      setShowSplitEditor(false);
       fetchOrders({ silent: true });
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to cancel bill');
@@ -308,7 +350,10 @@ export default function BillRequestsPage() {
       {/* ── Bill Preview Modal ──────────────────────────────────────── */}
       {activeBill && (() => {
         const bill    = activeBill.bill;
-        const isUPI   = bill.paymentMethod === 'UPI';
+        const split   = isSplitBill(bill);
+        const anyPaid = (bill.splits || []).some(s => s.paymentStatus === 'Paid');
+        // In split mode the single-payment QR/method do not apply
+        const isUPI   = !split && bill.paymentMethod === 'UPI';
         const upiUrl  = buildUpiUrl(upiId, bill.grandTotal, restaurantName);
         const mobile  = activeBill.customer?.mobile || '';
 
@@ -398,17 +443,43 @@ export default function BillRequestsPage() {
                   <div className="flex justify-between font-bold text-white text-base border-t border-gray-700 pt-2">
                     <span>Grand Total</span><span>₹{bill.grandTotal.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between text-gray-400">
-                    <span>Payment</span>
-                    <span className={`font-medium px-2 py-0.5 rounded-full text-xs ${
-                      isUPI
-                        ? 'bg-orange-500/20 text-orange-400'
-                        : 'bg-gray-700 text-gray-300'
-                    }`}>
-                      {bill.paymentMethod}
-                    </span>
-                  </div>
+                  {!split && (
+                    <div className="flex justify-between text-gray-400">
+                      <span>Payment</span>
+                      <span className={`font-medium px-2 py-0.5 rounded-full text-xs ${
+                        isUPI
+                          ? 'bg-orange-500/20 text-orange-400'
+                          : 'bg-gray-700 text-gray-300'
+                      }`}>
+                        {bill.paymentMethod}
+                      </span>
+                    </div>
+                  )}
                 </div>
+
+                {/* ── Split bill ── */}
+                {split && (
+                  <SplitPayments
+                    bill={bill}
+                    upiId={upiId}
+                    restaurantName={restaurantName}
+                    onConfirmSplit={handleConfirmSplit}
+                    onRemoveSplit={() => handleSplitBill({ splitType: 'NONE' })}
+                  />
+                )}
+                {!split && bill.paymentStatus === 'Pending' && (
+                  showSplitEditor ? (
+                    <SplitEditor bill={bill} saving={splitSaving} onSubmit={handleSplitBill} onClose={() => setShowSplitEditor(false)} />
+                  ) : (
+                    <button
+                      onClick={() => setShowSplitEditor(true)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed
+                                 border-primary-500/40 text-primary-400 text-sm font-semibold hover:bg-primary-500/10 transition-colors"
+                    >
+                      <Split className="w-4 h-4" /> Split Bill
+                    </button>
+                  )
+                )}
 
                 {/* Items list */}
                 {bill.items.length > 0 && (
@@ -451,7 +522,8 @@ export default function BillRequestsPage() {
               <div className="flex gap-3 px-5 pb-5 shrink-0">
                 <button
                   onClick={handleCancelBill}
-                  disabled={cancelLoad || confirmLoad}
+                  disabled={cancelLoad || confirmLoad || anyPaid}
+                  title={anyPaid ? "Some people have already paid — this bill can't be cancelled" : undefined}
                   className="btn-secondary flex-1"
                 >
                   {cancelLoad
@@ -459,16 +531,19 @@ export default function BillRequestsPage() {
                     : <><XCircle className="w-4 h-4" /> Cancel</>
                   }
                 </button>
-                <button
-                  onClick={handleConfirmPayment}
-                  disabled={confirmLoad || cancelLoad}
-                  className="btn-success flex-1"
-                >
-                  {confirmLoad
-                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : <><CheckCircle className="w-4 h-4" /> {isUPI ? 'Payment Received' : 'Confirm Paid'}</>
-                  }
-                </button>
+                {/* Split bills close automatically when the last split is paid */}
+                {!split && (
+                  <button
+                    onClick={handleConfirmPayment}
+                    disabled={confirmLoad || cancelLoad || showSplitEditor}
+                    className="btn-success flex-1"
+                  >
+                    {confirmLoad
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : <><CheckCircle className="w-4 h-4" /> {isUPI ? 'Payment Received' : 'Confirm Paid'}</>
+                    }
+                  </button>
+                )}
               </div>
             </div>
           </div>
