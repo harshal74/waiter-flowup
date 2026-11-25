@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import API from '../lib/api';
 import type { Order, Bill } from '../types';
 import { SplitEditor, SplitPayments, isSplitBill, type SplitRequest, type PayMethod } from '../components/SplitBill';
+import { PendingBills, type PendingBill } from '../components/PendingBills';
 import { Split } from 'lucide-react';
 
 // UPI deep-link builder — data comes from DB via API, never from env
@@ -147,6 +148,28 @@ export default function BillRequestsPage() {
 
   // Initial load
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
+
+  // Generated-but-unpaid bills (incl. part-paid splits) so they survive a reload
+  const [pendingBills, setPendingBills] = useState<PendingBill[]>([]);
+  const fetchPendingBills = useCallback(async () => {
+    try {
+      const res = await API.get('/billing/pending');
+      setPendingBills(res.data.bills || []);
+      const ps = res.data.paymentSettings;
+      if (ps) {
+        setUpiId(ps.upiId || '');
+        setRestaurantName(ps.restaurantName || 'FlowUp Restaurant');
+        setGstSettings({ gstEnabled: ps.gstEnabled ?? false, sgstRate: ps.sgstRate ?? 0, cgstRate: ps.cgstRate ?? 0 });
+      }
+    } catch { /* non-blocking */ }
+  }, []);
+  useEffect(() => { if (!activeBill) fetchPendingBills(); }, [activeBill, fetchPendingBills]);
+
+  const openPendingBill = (b: PendingBill) =>
+    setActiveBill({
+      bill: b as unknown as Bill,
+      customer: { name: b.customer?.name || '', mobile: b.customer?.mobile || '' },
+    });
 
   // Preselect a specific order when navigated here from COD delivery completion.
   // Waits until `orders` is populated so the ID can be verified against the fetched list.
@@ -346,6 +369,8 @@ export default function BillRequestsPage() {
           </div>
         </div>
       </div>
+
+      <PendingBills bills={pendingBills} onOpen={openPendingBill} />
 
       {/* ── Bill Preview Modal ──────────────────────────────────────── */}
       {activeBill && (() => {
