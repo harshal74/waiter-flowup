@@ -42,9 +42,12 @@ export default function WaiterCallsPage() {
         _id: String(req._id), restaurantId: req.restaurantId,
         tableNumber: req.tableNumber, customerName: req.customerName || '',
         status: req.status || 'PENDING', createdAt: req.createdAt || new Date().toISOString(),
+        requestType: req.requestType === 'BILL' ? 'BILL' : 'WAITER',
       };
       setRequests(p => p.some(r => r._id === item._id) ? p : [item, ...p]);
-      toast(`Table ${req.tableNumber} is calling for a waiter`, { icon: '🔔' });
+      toast(req.requestType === 'BILL'
+        ? `Table ${req.tableNumber} wants the bill`
+        : `Table ${req.tableNumber} is calling for a waiter`, { icon: req.requestType === 'BILL' ? '🧾' : '🔔' });
     };
 
     const onUpdate = (payload: { _id: string; status: string; tableNumber?: number }) => {
@@ -134,7 +137,8 @@ export default function WaiterCallsPage() {
                     <BellRing className="w-4 h-4 text-orange-400 shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-white">
-                        {req.customerName || 'Customer needs assistance'}
+                        {req.requestType === 'BILL' ? '🧾 Bill requested' : '🔔 Needs assistance'}
+                        {req.customerName ? ` · ${req.customerName}` : ''}
                       </p>
                     </div>
                     <p className="text-xs text-gray-500 flex items-center gap-1 shrink-0">

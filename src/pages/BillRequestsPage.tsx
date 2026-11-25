@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
+import { socket } from '../context/SocketContext';
 import { Receipt, Loader2, ChevronDown, ChevronUp, CheckCircle, XCircle, MessageCircle, Search, RefreshCw, X, AlertCircle, CalendarCheck } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
@@ -165,6 +166,33 @@ export default function BillRequestsPage() {
   }, []);
   useEffect(() => { if (!activeBill) fetchPendingBills(); }, [activeBill, fetchPendingBills]);
 
+  // ── Live billing: another screen changed a bill ──────────────
+  const activeBillRef = useRef<BillDetail | null>(null);
+  activeBillRef.current = activeBill;
+  const selfActionRef = useRef(false);
+  const fetchOrdersRef = useRef(fetchOrders);
+  fetchOrdersRef.current = fetchOrders;
+  useEffect(() => {
+    const onBillUpdated = async (p: { billId: string; action: string }) => {
+      fetchOrdersRef.current({ silent: true });
+      fetchPendingBills();
+      const open = activeBillRef.current;
+      if (!open || open.bill._id !== p.billId || selfActionRef.current) return;
+      if (p.action === 'paid' || p.action === 'cancelled') {
+        setActiveBill(null);
+        setShowSplitEditor(false);
+        toast(p.action === 'paid' ? 'This bill was paid on another screen.' : 'This bill was cancelled on another screen.');
+        return;
+      }
+      try {
+        const res = await API.get(`/billing/${p.billId}`);
+        if (res.data?.bill) setActiveBill(prev => prev ? { ...prev, bill: res.data.bill } : prev);
+      } catch { /* keep current view */ }
+    };
+    socket.on('bill_updated', onBillUpdated);
+    return () => { socket.off('bill_updated', onBillUpdated); };
+  }, [fetchPendingBills]);
+
   const openPendingBill = (b: PendingBill) =>
     setActiveBill({
       bill: b as unknown as Bill,
@@ -238,13 +266,14 @@ export default function BillRequestsPage() {
   const handleConfirmPayment = async () => {
     if (!activeBill) return;
     setConfirmLoad(true);
+    selfActionRef.current = true;
     try {
       const res = await API.patch(`/billing/${activeBill.bill._id}/confirm`);
       toast.success('Payment confirmed! Bill closed.');
       afterBillPaid(res.data);
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to confirm payment');
-    } finally { setConfirmLoad(false); }
+    } finally { setConfirmLoad(false); selfActionRef.current = false; }
   };
 
   // ── Split bill ─────────────────────────────────────────────
@@ -254,6 +283,7 @@ export default function BillRequestsPage() {
   const handleSplitBill = async (req: SplitRequest) => {
     if (!activeBill) return;
     setSplitSaving(true);
+    selfActionRef.current = true;
     try {
       const res = await API.patch(`/billing/${activeBill.bill._id}/split`, req);
       setActiveBill(prev => prev ? { ...prev, bill: res.data.bill } : prev);
@@ -261,11 +291,12 @@ export default function BillRequestsPage() {
       toast.success(req.splitType === 'NONE' ? 'Split removed.' : "Bill split. Collect each person's payment.");
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to split bill');
-    } finally { setSplitSaving(false); }
+    } finally { setSplitSaving(false); selfActionRef.current = false; }
   };
 
   const handleConfirmSplit = async (splitId: string, method: PayMethod) => {
     if (!activeBill) return;
+    selfActionRef.current = true;
     try {
       const res = await API.patch(`/billing/${activeBill.bill._id}/splits/${splitId}/confirm`, { paymentMethod: method });
       if (res.data?.billPaid) {
@@ -277,12 +308,13 @@ export default function BillRequestsPage() {
       }
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to confirm split payment');
-    }
+    } finally { selfActionRef.current = false; }
   };
 
   const handleCancelBill = async () => {
     if (!activeBill) return;
     setCancelLoad(true);
+    selfActionRef.current = true;
     try {
       await API.delete(`/billing/${activeBill.bill._id}`);
       toast('Bill cancelled. Orders returned to unpaid list.');
@@ -291,7 +323,7 @@ export default function BillRequestsPage() {
       fetchOrders({ silent: true });
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to cancel bill');
-    } finally { setCancelLoad(false); }
+    } finally { setCancelLoad(false); selfActionRef.current = false; }
   };
 
   return (

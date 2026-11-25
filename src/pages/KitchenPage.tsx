@@ -32,6 +32,7 @@ function isPriority(createdAt: string): boolean {
 function OrderCard({ order, onAction }: { order: Order; onAction: (id: string, next: OrderStatus) => void }) {
   const [, setTick] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [prep, setPrep] = useState(0); // minutes chosen on accept; 0 = restaurant default
   const col = KDS_COLS.find(c => c.status === order.status)!;
 
   // Tick every 60 s to refresh elapsed time
@@ -46,7 +47,10 @@ function OrderCard({ order, onAction }: { order: Order; onAction: (id: string, n
     if (busy || !col.nextStatus) return;
     setBusy(true);
     try {
-      await API.patch(`/staff/orders/${order._id}/${ENDPOINT[col.nextStatus]}`);
+      await API.patch(
+        `/staff/orders/${order._id}/${ENDPOINT[col.nextStatus]}`,
+        col.nextStatus === 'ACCEPTED' && prep ? { estimatedTime: prep } : {}
+      );
       onAction(order._id, col.nextStatus);
       toast.success(`Order #${order.orderNumber} → ${col.nextStatus}`);
     } catch (err: any) {
@@ -104,6 +108,29 @@ function OrderCard({ order, onAction }: { order: Order; onAction: (id: string, n
       {order.note && (
         <p className="text-[11px] text-gray-400 italic border-t border-gray-700 pt-2">📝 {order.note}</p>
       )}
+
+      {/* Prep time (chef sets it when accepting) */}
+      {order.status === 'PENDING' && (
+        <div className="flex flex-wrap gap-1.5">
+          {[10, 15, 20, 30, 45].map(m => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setPrep(prep === m ? 0 : m)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                prep === m
+                  ? 'bg-amber-500 text-white border-amber-500'
+                  : 'bg-gray-800 text-gray-300 border-gray-600'
+              }`}
+            >
+              {m} min
+            </button>
+          ))}
+        </div>
+      )}
+      {order.status !== 'PENDING' && (order as any).estimatedTime ? (
+        <p className="text-[11px] text-gray-400">⏱ Prep time: {(order as any).estimatedTime} min</p>
+      ) : null}
 
       {/* Action button */}
       {col.btn && col.nextStatus ? (

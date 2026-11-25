@@ -60,6 +60,7 @@ export interface WaiterRequest {
   tableNumber: number;
   customerName: string;
   status: 'PENDING' | 'ACCEPTED' | 'COMPLETED';
+  requestType?: 'WAITER' | 'BILL';
   createdAt: string;
 }
 
