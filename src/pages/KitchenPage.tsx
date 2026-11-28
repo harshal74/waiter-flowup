@@ -143,9 +143,31 @@ function OrderCard({ order, onAction }: { order: Order; onAction: (id: string, n
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : col.btnLabel}
         </button>
       ) : col.status === 'READY' ? (
-        <div className="w-full text-center py-3 rounded-xl bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-semibold">
-          ✓ Waiting for Waiter
-        </div>
+        order.orderType === 'DELIVERY' ? (
+          // Delivery orders at READY get a Dispatch button (waiter path)
+          <button
+            onClick={async () => {
+              if (busy) return;
+              setBusy(true);
+              try {
+                await API.patch(`/staff/orders/${order._id}/dispatch`);
+                onAction(order._id, 'OUT_FOR_DELIVERY');
+                toast.success(`Order #${order.orderNumber} dispatched`);
+              } catch (err: any) {
+                toast.error(err?.response?.data?.message || 'Failed to dispatch');
+              } finally { setBusy(false); }
+            }}
+            disabled={busy}
+            className="w-full bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-semibold rounded-xl py-3 min-h-[48px]
+                        flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+          >
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : '🚚 Dispatch — Out for Delivery'}
+          </button>
+        ) : (
+          <div className="w-full text-center py-3 rounded-xl bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-semibold">
+            ✓ Waiting for Waiter
+          </div>
+        )
       ) : null}
     </motion.div>
   );
@@ -168,7 +190,7 @@ export default function KitchenPage() {
     mountedRef.current = true;
     fetchOrders();
 
-    const KDS_STATUSES = new Set(['PENDING', 'ACCEPTED', 'PREPARING', 'READY']);
+    const KDS_STATUSES = new Set(['PENDING', 'ACCEPTED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY']);
 
     const onNew = (order: Order) =>
       setOrders(p => p.some(o => o._id === order._id) ? p : [order, ...p]);

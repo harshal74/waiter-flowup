@@ -49,9 +49,11 @@ export interface Order {
   preparedBy?: string | null;
   servedBy?: string | null;
   acceptedAt?: string | null;
+  seatedAt?: string | null;    // when the first dine-in order at this table was accepted
   completedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  estimatedTime?: number | null;
 }
 
 export interface WaiterRequest {
